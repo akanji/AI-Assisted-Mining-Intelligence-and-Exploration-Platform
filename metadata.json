@@ -1,0 +1,6 @@
+{
+  "name": "AI-Assisted Mining Intelligence and Exploration Platform",
+  "description": "An enterprise mobile and web platform with computer vision, hyperspectral mineral mapping, GIS exploration, A2A judge agent self-maintenance, and MineAI interactive guidance.",
+  "requestFramePermissions": ["camera", "microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

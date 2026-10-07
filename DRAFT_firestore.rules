@@ -1,0 +1,106 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny all unknown paths
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['id', 'email', 'createdAt']) &&
+             data.keys().hasOnly(['id', 'email', 'displayName', 'photoURL', 'role', 'createdAt', 'updatedAt']) &&
+             data.id is string && data.id.size() > 0 && data.id.size() <= 128 &&
+             data.email is string && data.email.size() > 0 && data.email.size() <= 256 &&
+             (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 128)) &&
+             (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 1024)) &&
+             (!('role' in data) || (data.role is string && (data.role == 'geologist' || data.role == 'engineer' || data.role == 'admin' || data.role == 'viewer'))) &&
+             data.createdAt is string && data.createdAt.size() <= 64 &&
+             (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64));
+    }
+
+    function isValidDrillHoleAnnotation(data) {
+      return data.keys().hasAll(['id', 'holeId', 'depthFrom', 'depthTo', 'note', 'authorId', 'createdAt']) &&
+             data.keys().hasOnly(['id', 'holeId', 'depthFrom', 'depthTo', 'note', 'category', 'authorId', 'authorName', 'createdAt', 'updatedAt']) &&
+             data.id is string && data.id.size() > 0 && data.id.size() <= 128 &&
+             data.holeId is string && data.holeId.size() > 0 && data.holeId.size() <= 128 &&
+             data.depthFrom is number && data.depthFrom >= 0 &&
+             data.depthTo is number && data.depthTo >= data.depthFrom &&
+             data.note is string && data.note.size() > 0 && data.note.size() <= 2000 &&
+             (!('category' in data) || (data.category is string && data.category.size() <= 64)) &&
+             data.authorId is string && data.authorId.size() > 0 && data.authorId.size() <= 128 &&
+             (!('authorName' in data) || (data.authorName is string && data.authorName.size() <= 128)) &&
+             data.createdAt is string && data.createdAt.size() <= 64 &&
+             (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64));
+    }
+
+    // User profiles collection
+    match /users/{userId} {
+      allow get: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow list: if false; // PII protection: no blanket user listing
+      allow create: if isSignedIn() &&
+                    request.auth.uid == userId &&
+                    isValidId(userId) &&
+                    isValidUserProfile(incoming()) &&
+                    incoming().id == userId;
+      allow update: if isSignedIn() &&
+                    (request.auth.uid == userId || isAdmin()) &&
+                    isValidId(userId) &&
+                    isValidUserProfile(incoming()) &&
+                    incoming().id == existing().id &&
+                    incoming().email == existing().email &&
+                    incoming().createdAt == existing().createdAt &&
+                    incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoURL', 'role', 'updatedAt']);
+      allow delete: if false;
+    }
+
+    // Drill Hole Annotations collection
+    match /drillHoleAnnotations/{annotationId} {
+      allow get, list: if isSignedIn();
+      allow create: if isSignedIn() &&
+                    isValidId(annotationId) &&
+                    isValidDrillHoleAnnotation(incoming()) &&
+                    incoming().id == annotationId &&
+                    incoming().authorId == request.auth.uid;
+      allow update: if isSignedIn() &&
+                    isValidId(annotationId) &&
+                    isValidDrillHoleAnnotation(incoming()) &&
+                    (existing().authorId == request.auth.uid || isAdmin()) &&
+                    incoming().id == existing().id &&
+                    incoming().authorId == existing().authorId &&
+                    incoming().holeId == existing().holeId &&
+                    incoming().createdAt == existing().createdAt &&
+                    incoming().diff(existing()).affectedKeys().hasOnly(['note', 'category', 'updatedAt', 'depthFrom', 'depthTo', 'authorName']);
+      allow delete: if isSignedIn() &&
+                    isValidId(annotationId) &&
+                    (existing().authorId == request.auth.uid || isAdmin());
+    }
+
+    // Test connection probe
+    match /test/{testId} {
+      allow get: if true;
+      allow list, write: if false;
+    }
+  }
+}

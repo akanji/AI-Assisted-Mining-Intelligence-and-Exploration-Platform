@@ -1,0 +1,142 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "User Profile",
+      "description": "User account and profile data for geological exploration team members",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Firebase Auth UID",
+          "maxLength": 128
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "User email address",
+          "maxLength": 256
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Display name of the user",
+          "maxLength": 128
+        },
+        "photoURL": {
+          "type": "string",
+          "description": "Avatar photo URL",
+          "maxLength": 1024
+        },
+        "role": {
+          "type": "string",
+          "description": "User exploration role",
+          "enum": ["geologist", "engineer", "admin", "viewer"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Account creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last profile update timestamp"
+        }
+      },
+      "required": ["id", "email", "createdAt"]
+    },
+    "DrillHoleAnnotation": {
+      "title": "Drill Hole Annotation",
+      "description": "Geological interval note and log annotation created by team members",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique annotation ID",
+          "maxLength": 128
+        },
+        "holeId": {
+          "type": "string",
+          "description": "Drill hole identifier",
+          "maxLength": 128
+        },
+        "depthFrom": {
+          "type": "number",
+          "description": "Starting depth in meters"
+        },
+        "depthTo": {
+          "type": "number",
+          "description": "Ending depth in meters"
+        },
+        "note": {
+          "type": "string",
+          "description": "Annotation text content",
+          "maxLength": 2000
+        },
+        "category": {
+          "type": "string",
+          "description": "Category or lithology tag",
+          "maxLength": 64
+        },
+        "authorId": {
+          "type": "string",
+          "description": "Firebase Auth UID of author",
+          "maxLength": 128
+        },
+        "authorName": {
+          "type": "string",
+          "description": "Display name of author",
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update timestamp"
+        }
+      },
+      "required": ["id", "holeId", "depthFrom", "depthTo", "note", "authorId", "createdAt"]
+    },
+    "TestConnection": {
+      "title": "Test Connection Document",
+      "description": "Smoke check probe document for Firestore availability check",
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "description": "Status marker",
+          "maxLength": 32
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Probe timestamp"
+        }
+      },
+      "required": ["status"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/UserProfile"
+      },
+      "description": "User profile collection indexed by Auth UID"
+    },
+    "/drillHoleAnnotations/{annotationId}": {
+      "schema": {
+        "$ref": "#/entities/DrillHoleAnnotation"
+      },
+      "description": "Collection of drillhole interval annotations across projects"
+    },
+    "/test/{testId}": {
+      "schema": {
+        "$ref": "#/entities/TestConnection"
+      },
+      "description": "Health probe test collection"
+    }
+  }
+}
