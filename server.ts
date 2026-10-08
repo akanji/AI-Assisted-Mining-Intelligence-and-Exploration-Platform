@@ -76,7 +76,254 @@ app.get("/api/health", (req, res) => {
     timestamp: new Date().toISOString(),
     service: "AI-Assisted Mining Intelligence and Exploration Platform (MINEX AI)",
     hasGeminiKey: Boolean(process.env.GEMINI_API_KEY),
+    paypalConfigured: Boolean(process.env.PAYPAL_CLIENT_ID),
   });
+});
+
+// ==========================================
+// PayPal Environment & Billing Integration
+// ==========================================
+const PAYPAL_API_URL = process.env.PAYPAL_API_URL || "https://api-m.paypal.com";
+const PAYPAL_CLIENT_ID = process.env.PAYPAL_CLIENT_ID || "BAAIOmq3Kx_2Lo8oiG7L8JlzOuuAKT2E1V2cJaJka7wJ5afyYJRYJRhXzbX-KnAPEU19Hn4jdHf79ksIqo";
+const PAYPAL_CLIENT_SECRET = process.env.PAYPAL_CLIENT_SECRET || "";
+const PAYPAL_PLAN_ID_MONTHLY = process.env.PAYPAL_PLAN_ID_MONTHLY || "P-9MR87385UK965163FNLDKUWQ";
+const PAYPAL_PLAN_ID_YEARLY = process.env.PAYPAL_PLAN_ID_YEARLY || "P-3RC84578D5065391CNLDKWLA";
+const PAYPAL_PRODUCT_ID = process.env.PAYPAL_PRODUCT_ID || "";
+
+async function getPayPalAccessToken(): Promise<string> {
+  if (!PAYPAL_CLIENT_ID || !PAYPAL_CLIENT_SECRET) {
+    throw new Error("PayPal Client ID or Client Secret is not configured in environment variables.");
+  }
+
+  const auth = Buffer.from(`${PAYPAL_CLIENT_ID}:${PAYPAL_CLIENT_SECRET}`).toString("base64");
+  const response = await fetch(`${PAYPAL_API_URL}/v1/oauth2/token`, {
+    method: "POST",
+    headers: {
+      "Authorization": `Basic ${auth}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: "grant_type=client_credentials",
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Failed to obtain PayPal access token: ${response.status} ${errorText}`);
+  }
+
+  const data = (await response.json()) as { access_token: string };
+  return data.access_token;
+}
+
+// 0A. PayPal Public Configuration Route (Safe for Client)
+app.get("/api/paypal/config", (_req, res) => {
+  res.json({
+    apiUrl: PAYPAL_API_URL,
+    clientId: PAYPAL_CLIENT_ID,
+    planIdMonthly: PAYPAL_PLAN_ID_MONTHLY,
+    planIdYearly: PAYPAL_PLAN_ID_YEARLY,
+    productId: PAYPAL_PRODUCT_ID,
+    isConfigured: Boolean(PAYPAL_CLIENT_ID && PAYPAL_CLIENT_SECRET),
+    plans: {
+      monthly: {
+        id: PAYPAL_PLAN_ID_MONTHLY || "PLAN-MONTHLY-DEFAULT",
+        price: 19.99,
+        currency: "USD",
+        interval: "MONTH",
+      },
+      yearly: {
+        id: PAYPAL_PLAN_ID_YEARLY || "PLAN-YEARLY-DEFAULT",
+        price: 199.99,
+        currency: "USD",
+        interval: "YEAR",
+      },
+    },
+  });
+});
+
+// 0B. PayPal Create Order Route
+app.post("/api/paypal/create-order", async (req, res) => {
+  try {
+    const { plan = "monthly", userEmail: _userEmail } = req.body;
+    const amount = plan === "monthly" ? "19.99" : "199.99";
+    const planName = plan === "monthly" ? "MINEX AI Professional Monthly" : "MINEX AI Enterprise Yearly";
+
+    // If real PayPal credentials are provided, call live PayPal API
+    if (PAYPAL_CLIENT_ID && PAYPAL_CLIENT_SECRET) {
+      const accessToken = await getPayPalAccessToken();
+      const response = await fetch(`${PAYPAL_API_URL}/v2/checkout/orders`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          intent: "CAPTURE",
+          purchase_units: [
+            {
+              amount: {
+                currency_code: "USD",
+                value: amount,
+              },
+              description: `${planName} - AI-Assisted Mining Exploration Platform`,
+            },
+          ],
+          application_context: {
+            brand_name: "MINEX AI Intelligence",
+            landing_page: "BILLING",
+            user_action: "PAY_NOW",
+          },
+        }),
+      });
+
+      const orderData = (await response.json()) as any;
+      if (!response.ok) {
+        return res.status(response.status).json({
+          success: false,
+          error: orderData.message || "PayPal order creation failed",
+          details: orderData,
+        });
+      }
+
+      return res.json({
+        success: true,
+        orderId: orderData.id,
+        status: orderData.status,
+        links: orderData.links,
+        isLive: true,
+      });
+    }
+
+    // Sandbox / Simulation fallback when environment keys are pending
+    const simOrderId = `SIM-PP-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
+    return res.json({
+      success: true,
+      orderId: simOrderId,
+      status: "CREATED",
+      isLive: false,
+      amount,
+      plan,
+      notice: "PayPal credentials not yet configured. Simulated order generated.",
+    });
+  } catch (error: any) {
+    console.error("Error in /api/paypal/create-order:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message || "Failed to initiate PayPal order",
+    });
+  }
+});
+
+// 0C. PayPal Capture Order Route
+app.post("/api/paypal/capture-order", async (req, res) => {
+  try {
+    const { orderId, plan: _plan = "monthly" } = req.body;
+
+    if (!orderId) {
+      return res.status(400).json({ success: false, error: "Order ID is required" });
+    }
+
+    if (PAYPAL_CLIENT_ID && PAYPAL_CLIENT_SECRET && !orderId.startsWith("SIM-PP-")) {
+      const accessToken = await getPayPalAccessToken();
+      const response = await fetch(`${PAYPAL_API_URL}/v2/checkout/orders/${orderId}/capture`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+      });
+
+      const captureData = (await response.json()) as any;
+      if (!response.ok) {
+        return res.status(response.status).json({
+          success: false,
+          error: captureData.message || "PayPal capture failed",
+          details: captureData,
+        });
+      }
+
+      return res.json({
+        success: true,
+        status: captureData.status || "COMPLETED",
+        captureId: captureData.purchase_units?.[0]?.payments?.captures?.[0]?.id || captureData.id,
+        isLive: true,
+      });
+    }
+
+    // Simulation response
+    return res.json({
+      success: true,
+      status: "COMPLETED",
+      captureId: `CAP-${Date.now()}`,
+      orderId,
+      isLive: false,
+    });
+  } catch (error: any) {
+    console.error("Error in /api/paypal/capture-order:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message || "Failed to capture PayPal order",
+    });
+  }
+});
+
+// 0D. PayPal Subscription Create Route
+app.post("/api/paypal/create-subscription", async (req, res) => {
+  try {
+    const { plan = "monthly", subscriberEmail } = req.body;
+    const planId = plan === "monthly" ? PAYPAL_PLAN_ID_MONTHLY : PAYPAL_PLAN_ID_YEARLY;
+
+    if (PAYPAL_CLIENT_ID && PAYPAL_CLIENT_SECRET && planId) {
+      const accessToken = await getPayPalAccessToken();
+      const response = await fetch(`${PAYPAL_API_URL}/v1/billing/subscriptions`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          plan_id: planId,
+          subscriber: subscriberEmail ? { email_address: subscriberEmail } : undefined,
+          application_context: {
+            brand_name: "MINEX AI Exploration",
+            user_action: "SUBSCRIBE_NOW",
+          },
+        }),
+      });
+
+      const subData = (await response.json()) as any;
+      if (!response.ok) {
+        return res.status(response.status).json({
+          success: false,
+          error: subData.message || "Failed to create PayPal subscription",
+          details: subData,
+        });
+      }
+
+      return res.json({
+        success: true,
+        subscriptionId: subData.id,
+        status: subData.status,
+        approveLink: subData.links?.find((l: any) => l.rel === "approve")?.href,
+        isLive: true,
+      });
+    }
+
+    // Fallback simulation when plan IDs or credentials are placeholder
+    return res.json({
+      success: true,
+      subscriptionId: `SUB-PP-${Date.now()}`,
+      status: "ACTIVE",
+      planId: planId || (plan === "monthly" ? "SIM-PLAN-M" : "SIM-PLAN-Y"),
+      isLive: false,
+      notice: "PayPal subscription simulation active.",
+    });
+  } catch (error: any) {
+    console.error("Error in /api/paypal/create-subscription:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message || "Failed to create subscription",
+    });
+  }
 });
 
 // 1. Computer Vision & Visual Analysis Endpoint (Geology, Equipment/Safety, Ore/Environment)

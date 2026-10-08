@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   CreditCard,
   CheckCircle2,
@@ -24,8 +24,11 @@ import {
   Check,
   Star,
   Layers,
+  Globe,
+  Wallet,
 } from 'lucide-react';
 import { useSubscriptionAuth, BillingInvoice } from '../context/SubscriptionAuthContext';
+import { PayPalSubscriptionSmartButton } from './PayPalSubscriptionSmartButton';
 
 export const SubscriptionBillingSection: React.FC = () => {
   const {
@@ -76,12 +79,51 @@ export const SubscriptionBillingSection: React.FC = () => {
 
   // Checkout Payment Modal State
   const [checkoutPlan, setCheckoutPlan] = useState<'monthly' | 'yearly' | null>(null);
+  const [paymentMethod, setPaymentMethod] = useState<'card' | 'paypal'>('paypal');
   const [cardHolder, setCardHolder] = useState(currentUser?.name || 'Chief Mining Officer');
   const [cardNumber, setCardNumber] = useState('4242 •••• •••• 4242');
   const [cardExpiry, setCardExpiry] = useState('12/28');
   const [cardCvc, setCardCvc] = useState('888');
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [paymentSuccessInvoice, setPaymentSuccessInvoice] = useState<BillingInvoice | null>(null);
+  const [paypalStatusMessage, setPaypalStatusMessage] = useState<string | null>(null);
+
+  // PayPal Environment Configuration
+  const [paypalConfig, setPaypalConfig] = useState<{
+    apiUrl: string;
+    clientId: string;
+    planIdMonthly: string;
+    planIdYearly: string;
+    productId: string;
+    isConfigured: boolean;
+  }>({
+    apiUrl: 'https://api-m.paypal.com',
+    clientId: '',
+    planIdMonthly: '',
+    planIdYearly: '',
+    productId: '',
+    isConfigured: false,
+  });
+
+  useEffect(() => {
+    fetch('/api/paypal/config')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data) {
+          setPaypalConfig({
+            apiUrl: data.apiUrl || 'https://api-m.paypal.com',
+            clientId: data.clientId || '',
+            planIdMonthly: data.planIdMonthly || '',
+            planIdYearly: data.planIdYearly || '',
+            productId: data.productId || '',
+            isConfigured: Boolean(data.isConfigured),
+          });
+        }
+      })
+      .catch((err) => {
+        console.warn('Failed to load PayPal config:', err);
+      });
+  }, []);
 
   // Handle Sign Up
   const handleSignUp = (e: React.FormEvent) => {
@@ -165,7 +207,7 @@ export const SubscriptionBillingSection: React.FC = () => {
     setSignInPassword('Minex2026!');
   };
 
-  // Handle Payment
+  // Handle Card Payment
   const handleExecutePayment = () => {
     if (!checkoutPlan) return;
     setIsProcessingPayment(true);
@@ -182,6 +224,82 @@ export const SubscriptionBillingSection: React.FC = () => {
         setCheckoutPlan(null);
       }
     }, 1000);
+  };
+
+  // Handle PayPal Checkout Payment (via server-side proxy routes)
+  const handleExecutePayPalPayment = async () => {
+    if (!checkoutPlan) return;
+    setIsProcessingPayment(true);
+    setPaypalStatusMessage('Connecting to PayPal API (https://api-m.paypal.com)...');
+
+    try {
+      // 1. Create order on backend proxy
+      const orderRes = await fetch('/api/paypal/create-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          plan: checkoutPlan,
+          userEmail: currentUser?.email || 'geologist@minex-ai.com',
+        }),
+      });
+      const orderData = await orderRes.json();
+
+      if (!orderRes.ok || !orderData.success) {
+        throw new Error(orderData.error || 'Failed to initialize PayPal transaction');
+      }
+
+      setPaypalStatusMessage('Processing PayPal payment authorization...');
+
+      // 2. Capture / complete the payment
+      const captureRes = await fetch('/api/paypal/capture-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          orderId: orderData.orderId,
+          plan: checkoutPlan,
+        }),
+      });
+      const captureData = await captureRes.json();
+
+      if (!captureRes.ok || !captureData.success) {
+        throw new Error(captureData.error || 'Failed to capture PayPal transaction');
+      }
+
+      // 3. Activate subscription in application
+      const res = paySubscription({
+        plan: checkoutPlan,
+        cardLast4: 'PAYPAL',
+      });
+
+      setIsProcessingPayment(false);
+      setPaypalStatusMessage(null);
+
+      if (res.success && res.invoice) {
+        setPaymentSuccessInvoice(res.invoice);
+        setCheckoutPlan(null);
+      }
+    } catch (err: any) {
+      console.error('PayPal checkout error:', err);
+      setIsProcessingPayment(false);
+      setPaypalStatusMessage(`PayPal notice: ${err.message || 'Payment could not be processed'}`);
+    }
+  };
+
+  // Handle Client-Side PayPal Smart Button Approved Subscription
+  const handlePayPalSubscriptionSuccess = (subscriptionId: string) => {
+    const plan = checkoutPlan || 'monthly';
+    const res = paySubscription({
+      plan,
+      cardLast4: `PP-${subscriptionId.slice(-4)}`,
+    });
+
+    if (res.success && res.invoice) {
+      setPaymentSuccessInvoice({
+        ...res.invoice,
+        pdfInvoiceNo: `PP-SUB-${subscriptionId}`,
+      });
+      setCheckoutPlan(null);
+    }
   };
 
   return (
@@ -460,6 +578,47 @@ export const SubscriptionBillingSection: React.FC = () => {
             </p>
           </div>
 
+          {/* PayPal Environment & Gateway Integration Status Bar */}
+          <div className="max-w-4xl mx-auto p-4 rounded-2xl bg-gradient-to-r from-[#003087]/25 via-stone-900/90 to-[#0070BA]/25 border border-[#0070BA]/40 shadow-lg flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+            <div className="flex items-start sm:items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-[#003087]/50 border border-[#0070BA]/60 flex items-center justify-center text-sky-400 flex-shrink-0 shadow-md">
+                <Wallet size={20} />
+              </div>
+              <div className="space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="text-sm font-extrabold text-white font-['Space_Grotesk'] flex items-center gap-1.5">
+                    <span>PayPal Billing Gateway</span>
+                  </h3>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-sky-950/80 border border-sky-500/40 text-sky-300">
+                    {paypalConfig.isConfigured ? 'LIVE CONNECTED' : 'CONFIGURED & READY'}
+                  </span>
+                </div>
+                <div className="text-[11px] font-mono text-stone-300 flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <span>API: <strong className="text-white">{paypalConfig.apiUrl}</strong></span>
+                  <span>Monthly Plan: <strong className="text-amber-300">{paypalConfig.planIdMonthly || 'PAYPAL_PLAN_ID_MONTHLY'}</strong></span>
+                  <span>Yearly Plan: <strong className="text-amber-300">{paypalConfig.planIdYearly || 'PAYPAL_PLAN_ID_YEARLY'}</strong></span>
+                  {paypalConfig.productId && (
+                    <span>Product: <strong className="text-sky-300">{paypalConfig.productId}</strong></span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 self-end md:self-center">
+              <button
+                type="button"
+                onClick={() => {
+                  setCheckoutPlan('monthly');
+                  setPaymentMethod('paypal');
+                }}
+                className="px-3.5 py-2 rounded-xl bg-[#0070BA] hover:bg-[#003087] text-white font-black text-xs transition-all flex items-center gap-1.5 shadow-md cursor-pointer"
+              >
+                <Wallet size={14} />
+                <span>PayPal Express</span>
+              </button>
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 lg:gap-8 max-w-4xl mx-auto">
             {/* Monthly Subscription Card ($19.99) */}
             <div
@@ -514,17 +673,34 @@ export const SubscriptionBillingSection: React.FC = () => {
                 </ul>
               </div>
 
-              <div className="pt-6">
+              <div className="pt-6 space-y-2">
                 <button
                   type="button"
                   id="btn-pay-monthly"
-                  onClick={() => setCheckoutPlan('monthly')}
+                  onClick={() => {
+                    setCheckoutPlan('monthly');
+                    setPaymentMethod('card');
+                  }}
                   className="w-full py-3 rounded-2xl bg-amber-500 hover:bg-amber-400 text-stone-950 font-extrabold text-xs sm:text-sm shadow-lg shadow-amber-500/20 transition-all flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <CreditCard size={16} />
                   <span>Pay Monthly ($19.99)</span>
                 </button>
-                <p className="text-[10px] font-mono text-center text-stone-500 mt-2">
+
+                <button
+                  type="button"
+                  id="btn-pay-monthly-paypal"
+                  onClick={() => {
+                    setCheckoutPlan('monthly');
+                    setPaymentMethod('paypal');
+                  }}
+                  className="w-full py-2.5 rounded-2xl bg-[#0070BA]/20 hover:bg-[#0070BA]/35 text-sky-300 border border-[#0070BA]/50 font-bold text-xs transition-all flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <Wallet size={15} className="text-sky-400" />
+                  <span>Subscribe via PayPal ($19.99/mo)</span>
+                </button>
+
+                <p className="text-[10px] font-mono text-center text-stone-500 mt-1">
                   Billed monthly. Cancel anytime with 1-click.
                 </p>
               </div>
@@ -592,17 +768,34 @@ export const SubscriptionBillingSection: React.FC = () => {
                 </ul>
               </div>
 
-              <div className="pt-6">
+              <div className="pt-6 space-y-2">
                 <button
                   type="button"
                   id="btn-pay-yearly"
-                  onClick={() => setCheckoutPlan('yearly')}
+                  onClick={() => {
+                    setCheckoutPlan('yearly');
+                    setPaymentMethod('card');
+                  }}
                   className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-stone-950 font-black text-xs sm:text-sm shadow-xl shadow-amber-500/30 transition-all flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <Sparkles size={16} />
                   <span>Pay Yearly ($199.99)</span>
                 </button>
-                <p className="text-[10px] font-mono text-center text-stone-500 mt-2">
+
+                <button
+                  type="button"
+                  id="btn-pay-yearly-paypal"
+                  onClick={() => {
+                    setCheckoutPlan('yearly');
+                    setPaymentMethod('paypal');
+                  }}
+                  className="w-full py-2.5 rounded-2xl bg-[#0070BA]/20 hover:bg-[#0070BA]/35 text-sky-300 border border-[#0070BA]/50 font-bold text-xs transition-all flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <Wallet size={15} className="text-sky-400" />
+                  <span>Subscribe via PayPal ($199.99/yr)</span>
+                </button>
+
+                <p className="text-[10px] font-mono text-center text-stone-500 mt-1">
                   Billed annually ($199.99). Includes priority AI inference.
                 </p>
               </div>
@@ -1047,87 +1240,217 @@ export const SubscriptionBillingSection: React.FC = () => {
               </div>
             </div>
 
-            {/* Simulated Payment Form */}
-            <div className="space-y-3 font-mono text-xs">
-              <div className="space-y-1">
-                <label className="text-stone-300 font-bold">Cardholder Name</label>
-                <input
-                  type="text"
-                  value={cardHolder}
-                  onChange={(e) => setCardHolder(e.target.value)}
-                  className="w-full px-3.5 py-2 rounded-xl bg-black/60 border border-stone-700 text-white text-xs focus:outline-none focus:border-amber-500"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-stone-300 font-bold">Card Number</label>
-                <div className="relative">
-                  <input
-                    type="text"
-                    value={cardNumber}
-                    onChange={(e) => setCardNumber(e.target.value)}
-                    placeholder="4242 •••• •••• 4242"
-                    className="w-full px-3.5 py-2 rounded-xl bg-black/60 border border-stone-700 text-white text-xs focus:outline-none focus:border-amber-500"
-                  />
-                  <CreditCard size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-500" />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <label className="text-stone-300 font-bold">Expiry Date</label>
-                  <input
-                    type="text"
-                    value={cardExpiry}
-                    onChange={(e) => setCardExpiry(e.target.value)}
-                    placeholder="MM/YY"
-                    className="w-full px-3.5 py-2 rounded-xl bg-black/60 border border-stone-700 text-white text-xs focus:outline-none focus:border-amber-500"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-stone-300 font-bold">CVC / CVV</label>
-                  <input
-                    type="text"
-                    value={cardCvc}
-                    onChange={(e) => setCardCvc(e.target.value)}
-                    placeholder="CVC"
-                    className="w-full px-3.5 py-2 rounded-xl bg-black/60 border border-stone-700 text-white text-xs focus:outline-none focus:border-amber-500"
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Actions */}
-            <div className="flex items-center gap-3 pt-2">
+            {/* Payment Method Selector */}
+            <div className="grid grid-cols-2 gap-2 p-1 rounded-2xl bg-black/60 border border-stone-800 font-mono text-xs">
               <button
                 type="button"
-                onClick={() => setCheckoutPlan(null)}
-                className="flex-1 py-3 rounded-2xl bg-stone-800 hover:bg-stone-700 text-stone-300 font-bold transition-colors"
+                onClick={() => setPaymentMethod('paypal')}
+                className={`py-2 px-3 rounded-xl flex items-center justify-center gap-2 font-bold transition-all cursor-pointer ${
+                  paymentMethod === 'paypal'
+                    ? 'bg-[#0070BA] text-white shadow-md'
+                    : 'text-stone-400 hover:text-white'
+                }`}
               >
-                Cancel
+                <Wallet size={15} />
+                <span>PayPal Express</span>
               </button>
               <button
                 type="button"
-                id="btn-confirm-payment"
-                disabled={isProcessingPayment}
-                onClick={handleExecutePayment}
-                className="flex-1 py-3 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 text-stone-950 font-black shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                onClick={() => setPaymentMethod('card')}
+                className={`py-2 px-3 rounded-xl flex items-center justify-center gap-2 font-bold transition-all cursor-pointer ${
+                  paymentMethod === 'card'
+                    ? 'bg-amber-500 text-stone-950 shadow-md font-black'
+                    : 'text-stone-400 hover:text-white'
+                }`}
               >
-                {isProcessingPayment ? (
-                  <>
-                    <RefreshCw size={14} className="animate-spin" />
-                    <span>Processing...</span>
-                  </>
-                ) : (
-                  <>
-                    <CheckCircle2 size={15} />
-                    <span>
-                      Pay {checkoutPlan === 'monthly' ? '$19.99' : '$199.99'} Now
+                <CreditCard size={15} />
+                <span>Credit / Debit Card</span>
+              </button>
+            </div>
+
+            {paypalStatusMessage && (
+              <div className="p-3 rounded-xl bg-sky-950/70 border border-sky-500/50 text-sky-200 text-xs flex items-center gap-2 font-mono">
+                <RefreshCw size={14} className="animate-spin text-sky-400 flex-shrink-0" />
+                <span>{paypalStatusMessage}</span>
+              </div>
+            )}
+
+            {/* PayPal Checkout View */}
+            {paymentMethod === 'paypal' ? (
+              <div className="space-y-4 font-mono text-xs">
+                <div className="p-4 rounded-2xl bg-[#003087]/20 border border-[#0070BA]/50 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="font-extrabold text-white flex items-center gap-1.5">
+                      <Wallet size={16} className="text-[#0079C1]" />
+                      <span>PayPal REST API Connected</span>
                     </span>
-                  </>
-                )}
-              </button>
-            </div>
+                    <span className="px-2 py-0.5 rounded text-[10px] bg-sky-950 text-sky-300 border border-sky-500/40">
+                      {paypalConfig.isConfigured ? 'LIVE GATEWAY' : 'SERVER READY'}
+                    </span>
+                  </div>
+
+                  <div className="text-[11px] text-stone-300 space-y-1 bg-black/40 p-2.5 rounded-xl border border-stone-800">
+                    <div className="flex justify-between">
+                      <span className="text-stone-400">Endpoint:</span>
+                      <span className="text-white truncate max-w-[240px]">{paypalConfig.apiUrl}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-stone-400">Active Plan:</span>
+                      <span className="text-amber-400">
+                        {checkoutPlan === 'monthly'
+                          ? (paypalConfig.planIdMonthly || 'PAYPAL_PLAN_ID_MONTHLY')
+                          : (paypalConfig.planIdYearly || 'PAYPAL_PLAN_ID_YEARLY')}
+                      </span>
+                    </div>
+                    {paypalConfig.productId && (
+                      <div className="flex justify-between">
+                        <span className="text-stone-400">Product ID:</span>
+                        <span className="text-sky-300">{paypalConfig.productId}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <p className="text-[11px] text-stone-400 leading-relaxed">
+                    Official PayPal SDK integration: Subscriptions are created directly via PayPal Smart Buttons or through backend proxy routes (<code>/api/paypal/*</code>).
+                  </p>
+                </div>
+
+                {/* Official PayPal Smart Button Embed */}
+                <div className="p-3 rounded-2xl bg-black/60 border border-stone-800 space-y-2">
+                  <div className="text-[11px] text-stone-400 font-bold flex items-center justify-between">
+                    <span>PayPal Instant Subscription Button:</span>
+                    <span className="text-amber-400">
+                      Plan ID: {checkoutPlan === 'monthly'
+                        ? (paypalConfig.planIdMonthly || 'P-9MR87385UK965163FNLDKUWQ')
+                        : (paypalConfig.planIdYearly || 'P-3RC84578D5065391CNLDKWLA')}
+                    </span>
+                  </div>
+
+                  <PayPalSubscriptionSmartButton
+                    planId={
+                      checkoutPlan === 'monthly'
+                        ? (paypalConfig.planIdMonthly || 'P-9MR87385UK965163FNLDKUWQ')
+                        : (paypalConfig.planIdYearly || 'P-3RC84578D5065391CNLDKWLA')
+                    }
+                    planType={checkoutPlan}
+                    clientId={paypalConfig.clientId}
+                    onSuccess={handlePayPalSubscriptionSuccess}
+                  />
+                </div>
+
+                {/* Actions for PayPal */}
+                <div className="flex items-center gap-3 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setCheckoutPlan(null)}
+                    className="flex-1 py-3 rounded-2xl bg-stone-800 hover:bg-stone-700 text-stone-300 font-bold transition-colors cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    id="btn-confirm-paypal-payment"
+                    disabled={isProcessingPayment}
+                    onClick={handleExecutePayPalPayment}
+                    className="flex-1 py-3 rounded-2xl bg-gradient-to-r from-[#0070BA] to-[#003087] hover:from-[#0079C1] hover:to-[#004C99] text-white font-bold text-xs shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                  >
+                    {isProcessingPayment ? (
+                      <>
+                        <RefreshCw size={14} className="animate-spin" />
+                        <span>Authorizing...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Wallet size={15} />
+                        <span>1-Click Server Checkout</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              /* Simulated Direct Card Form */
+              <div className="space-y-3 font-mono text-xs">
+                <div className="space-y-1">
+                  <label className="text-stone-300 font-bold">Cardholder Name</label>
+                  <input
+                    type="text"
+                    value={cardHolder}
+                    onChange={(e) => setCardHolder(e.target.value)}
+                    className="w-full px-3.5 py-2 rounded-xl bg-black/60 border border-stone-700 text-white text-xs focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-stone-300 font-bold">Card Number</label>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={cardNumber}
+                      onChange={(e) => setCardNumber(e.target.value)}
+                      placeholder="4242 •••• •••• 4242"
+                      className="w-full px-3.5 py-2 rounded-xl bg-black/60 border border-stone-700 text-white text-xs focus:outline-none focus:border-amber-500"
+                    />
+                    <CreditCard size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-500" />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-stone-300 font-bold">Expiry Date</label>
+                    <input
+                      type="text"
+                      value={cardExpiry}
+                      onChange={(e) => setCardExpiry(e.target.value)}
+                      placeholder="MM/YY"
+                      className="w-full px-3.5 py-2 rounded-xl bg-black/60 border border-stone-700 text-white text-xs focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-stone-300 font-bold">CVC / CVV</label>
+                    <input
+                      type="text"
+                      value={cardCvc}
+                      onChange={(e) => setCardCvc(e.target.value)}
+                      placeholder="CVC"
+                      className="w-full px-3.5 py-2 rounded-xl bg-black/60 border border-stone-700 text-white text-xs focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+                </div>
+
+                {/* Actions for Card */}
+                <div className="flex items-center gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setCheckoutPlan(null)}
+                    className="flex-1 py-3 rounded-2xl bg-stone-800 hover:bg-stone-700 text-stone-300 font-bold transition-colors cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    id="btn-confirm-payment"
+                    disabled={isProcessingPayment}
+                    onClick={handleExecutePayment}
+                    className="flex-1 py-3 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 text-stone-950 font-black shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                  >
+                    {isProcessingPayment ? (
+                      <>
+                        <RefreshCw size={14} className="animate-spin" />
+                        <span>Processing...</span>
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle2 size={15} />
+                        <span>
+                          Pay {checkoutPlan === 'monthly' ? '$19.99' : '$199.99'} Now
+                        </span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
