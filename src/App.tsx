@@ -48,11 +48,22 @@ import {
   Smartphone,
   CreditCard,
   Lock,
+  Clock,
   FileSpreadsheet,
   Database,
 } from 'lucide-react';
+import { PayPalScriptProvider } from '@paypal/react-paypal-js';
 
-export default function App() {
+const initialOptions = {
+  clientId:
+    import.meta.env.VITE_PAYPAL_CLIENT_ID ||
+    'BAAIOmq3Kx_2Lo8oiG7L8JlzOuuAKT2E1V2cJaJka7wJ5afyYJRYJRhXzbX-KnAPEU19Hn4jdHf79ksIqo',
+  components: 'buttons',
+  intent: 'subscription',
+  vault: true,
+};
+
+export function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
   const [selectedRegion, setSelectedRegion] = useState<Region>('Canada');
   const [isTourOpen, setIsTourOpen] = useState<boolean>(false);
@@ -77,8 +88,17 @@ export default function App() {
   const { registerNavigationHandler } = useEquipmentNotifications();
 
   // Subscription & 7-Day Trial Auth Hook
-  const { isAccessGranted, isSubscribed, isTrialActive, trialDaysRemaining, currentUser } = useSubscriptionAuth();
+  const {
+    isAccessGranted,
+    isSubscribed,
+    isTrialActive,
+    isTrialExpiringSoon,
+    trialDaysRemaining,
+    trialHoursRemaining,
+    currentUser,
+  } = useSubscriptionAuth();
 
+  // Allow full navigation across all tools while displaying license status in top bar and nav
   useEffect(() => {
     registerNavigationHandler((_equipmentId) => {
       setActiveTab('healthcare_esg');
@@ -181,7 +201,7 @@ export default function App() {
           />
         );
       case 'subscription':
-        return <SubscriptionBillingSection />;
+        return <SubscriptionBillingSection onNavigateToTab={(tab) => setActiveTab(tab)} />;
       default:
         return (
           <ExecutiveDashboard
@@ -194,7 +214,8 @@ export default function App() {
   };
 
   return (
-    <div className={`min-h-screen ${darkMode ? 'bg-[#1C100B] text-stone-100' : 'bg-[#FAF5EF] text-stone-900'} flex flex-col lg:flex-row transition-colors duration-300 font-['Plus_Jakarta_Sans']`}>
+    <PayPalScriptProvider options={initialOptions}>
+      <div className={`min-h-screen ${darkMode ? 'bg-[#1C100B] text-stone-100' : 'bg-[#FAF5EF] text-stone-900'} flex flex-col lg:flex-row transition-colors duration-300 font-['Plus_Jakarta_Sans']`}>
       {/* Left-Hand Single Navigation Panel */}
       <LeftPanelNavigation
         activeTab={activeTab}
@@ -383,26 +404,62 @@ export default function App() {
           </div>
         )}
 
-        {/* Global Trial Expired Warning Banner (if trial is expired and user is on another tab) */}
-        {!isAccessGranted && activeTab !== 'subscription' && (
-          <div className="mx-4 sm:mx-8 mt-3 p-3.5 rounded-2xl bg-rose-950/90 border-2 border-rose-500 text-rose-100 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xl animate-in slide-in-from-top-2 duration-200 ring-2 ring-rose-500/20">
-            <div className="flex items-center gap-2.5">
-              <Lock size={18} className="text-rose-400 flex-shrink-0 animate-bounce" />
+        {/* Pre-Expiration Warning Notification Banner (Notifies users before trial expires) */}
+        {isAccessGranted && isTrialActive && isTrialExpiringSoon && (
+          <div
+            id="trial-expiring-soon-banner"
+            className="mx-4 sm:mx-8 mt-3 p-3.5 rounded-2xl bg-gradient-to-r from-amber-950/95 via-[#3D2314]/95 to-amber-950/95 border-2 border-amber-500 text-amber-100 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xl animate-in slide-in-from-top-2 duration-200 ring-2 ring-amber-500/30"
+          >
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/40 flex-shrink-0">
+                <Clock size={18} className="animate-pulse" />
+              </div>
               <div>
-                <strong className="text-white block font-['Space_Grotesk']">
-                  Your 7-Day Free Trial Has Ended
+                <strong className="text-white block font-['Space_Grotesk'] text-sm">
+                  Trial Expiring Soon: {trialDaysRemaining} {trialDaysRemaining === 1 ? 'Day' : 'Days'} ({trialHoursRemaining}h) Remaining
                 </strong>
-                <span className="text-rose-200 text-[11px]">
-                  Subscribe to Monthly ($19.99) or Yearly ($199.99) to continue unlimited exploration without interruption.
+                <span className="text-amber-200/90 text-[11px]">
+                  Your 7-Day Free Trial will conclude soon. Select a Monthly ($19.99) or Yearly ($199.99) plan to continue uninterrupted geological analysis.
                 </span>
               </div>
             </div>
             <button
               onClick={() => setActiveTab('subscription')}
-              className="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 font-black text-xs shadow-md transition-all flex items-center gap-1.5 flex-shrink-0 cursor-pointer"
+              className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 font-black text-xs shadow-md transition-all flex items-center gap-1.5 flex-shrink-0 cursor-pointer"
             >
               <CreditCard size={13} />
-              <span>Choose Subscription Plan</span>
+              <span>Extend with Subscription</span>
+            </button>
+          </div>
+        )}
+
+        {/* Global Access Restriction Alert Banner (Trial Expired or Unauthenticated) */}
+        {!isAccessGranted && (
+          <div
+            id="access-restricted-banner"
+            className="mx-4 sm:mx-8 mt-3 p-3.5 rounded-2xl bg-rose-950/95 border-2 border-rose-500 text-rose-100 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xl animate-in slide-in-from-top-2 duration-200 ring-2 ring-rose-500/30"
+          >
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 rounded-xl bg-rose-500/20 text-rose-400 border border-rose-500/40 flex-shrink-0 animate-bounce">
+                <Lock size={18} />
+              </div>
+              <div>
+                <strong className="text-white block font-['Space_Grotesk'] text-sm">
+                  {currentUser ? '7-Day Free Trial Expired • Access Restricted' : 'Registration & 7-Day Free Trial Required'}
+                </strong>
+                <span className="text-rose-200 text-[11px]">
+                  {currentUser
+                    ? 'Further access to application tools is restricted. Select an available subscription plan below and complete payment to restore full access.'
+                    : 'Create your account to activate your 7-Day Free Trial and access the entire exploration suite.'}
+                </span>
+              </div>
+            </div>
+            <button
+              onClick={() => setActiveTab('subscription')}
+              className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 font-black text-xs shadow-md transition-all flex items-center gap-1.5 flex-shrink-0 cursor-pointer"
+            >
+              <CreditCard size={13} />
+              <span>{currentUser ? 'Choose Subscription Plan' : 'Activate 7-Day Free Trial'}</span>
             </button>
           </div>
         )}
@@ -532,5 +589,8 @@ export default function App() {
         />
       )}
     </div>
+  </PayPalScriptProvider>
   );
 }
+
+export default App;

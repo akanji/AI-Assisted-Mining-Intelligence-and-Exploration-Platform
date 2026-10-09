@@ -75,6 +75,20 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // Subscriptions collection: Client users can read their own subscription; Writes must be performed via secure backend Cloud Function / server proxy
+    match /subscriptions/{subDocId} {
+      allow get: if isSignedIn() && (
+        resource.data.userId == request.auth.uid ||
+        resource.data.userEmail == request.auth.token.email ||
+        isAdmin()
+      );
+      allow list: if isSignedIn() && (
+        request.query.limit <= 20
+      );
+      // Client-side writes are strictly disallowed: only backend processes webhooks and grants subscription status
+      allow create, update, delete: if false;
+    }
+
     // Drill Hole Annotations collection
     match /drillHoleAnnotations/{annotationId} {
       allow get, list: if isSignedIn();

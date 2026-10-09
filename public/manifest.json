@@ -1,0 +1,16 @@
+{
+  "short_name": "MINEX AI",
+  "name": "AI-Assisted Mining Intelligence and Exploration Platform",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "type": "image/svg+xml",
+      "sizes": "192x192 512x512"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#1C100B",
+  "theme_color": "#2A1810",
+  "display": "standalone",
+  "orientation": "portrait-primary"
+}

@@ -1,4 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { db } from '../firebase';
+import { doc, onSnapshot } from 'firebase/firestore';
 
 export interface BillingInvoice {
   id: string;
@@ -31,6 +33,7 @@ interface SubscriptionAuthContextType {
   currentUser: UserAccount | null;
   isAuthenticated: boolean;
   isTrialActive: boolean;
+  isTrialExpiringSoon: boolean;
   trialDaysRemaining: number;
   trialHoursRemaining: number;
   isSubscribed: boolean;
@@ -47,8 +50,8 @@ interface SubscriptionAuthContextType {
 
 const STORAGE_KEY = 'minex_subscription_auth_v1';
 
-// Default initial demo user with 7-Day trial active (starts 2 days ago, 5 days remaining)
-const DEFAULT_INITIAL_USER: UserAccount = {
+// Helper for default initial demo user with 7-Day trial active
+export const getDefaultInitialUser = (): UserAccount => ({
   id: 'usr-demo-01',
   name: 'Elena Rostova',
   email: 'elena.rostova@exploration-corp.com',
@@ -62,7 +65,7 @@ const DEFAULT_INITIAL_USER: UserAccount = {
   lastBilledDate: null,
   lastPaymentAmountUSD: null,
   billingInvoices: [],
-};
+});
 
 const SubscriptionAuthContext = createContext<SubscriptionAuthContextType | undefined>(undefined);
 
@@ -71,12 +74,24 @@ export const SubscriptionAuthProvider: React.FC<{ children: ReactNode }> = ({ ch
     try {
       const stored = localStorage.getItem(`${STORAGE_KEY}_users`);
       if (stored) {
-        return JSON.parse(stored);
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          // If the demo user has an expired trial date from a past session, refresh it so the demo operates smoothly
+          return parsed.map((u: UserAccount) => {
+            if (u.id === 'usr-demo-01' && u.subscriptionStatus === 'trial') {
+              const remaining = new Date(u.trialEndDate).getTime() - Date.now();
+              if (remaining <= 0) {
+                return getDefaultInitialUser();
+              }
+            }
+            return u;
+          });
+        }
       }
     } catch (_err) {
       // fallback
     }
-    return [DEFAULT_INITIAL_USER];
+    return [getDefaultInitialUser()];
   });
 
   const [currentUserId, setCurrentUserId] = useState<string | null>(() => {
@@ -84,7 +99,7 @@ export const SubscriptionAuthProvider: React.FC<{ children: ReactNode }> = ({ ch
       const stored = localStorage.getItem(`${STORAGE_KEY}_session`);
       if (stored) return stored;
     } catch (_err) {}
-    return DEFAULT_INITIAL_USER.id;
+    return 'usr-demo-01';
   });
 
   // Sync users to storage
@@ -105,18 +120,94 @@ export const SubscriptionAuthProvider: React.FC<{ children: ReactNode }> = ({ ch
     } catch (_err) {}
   }, [currentUserId]);
 
+  // Reactive clock to update remaining time and trigger expiry events
+  const [currentTime, setCurrentTime] = useState<number>(Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(Date.now());
+    }, 10000); // 10 second refresh
+    return () => clearInterval(timer);
+  }, []);
+
   const currentUser = users.find((u) => u.id === currentUserId) || null;
 
   // Calculate dynamic trial remaining time
-  const now = Date.now();
   const trialEndMs = currentUser ? new Date(currentUser.trialEndDate).getTime() : 0;
-  const msRemaining = Math.max(0, trialEndMs - now);
+  const msRemaining = Math.max(0, trialEndMs - currentTime);
   const trialDaysRemaining = Math.ceil(msRemaining / (24 * 3600 * 1000));
   const trialHoursRemaining = Math.ceil(msRemaining / (3600 * 1000));
 
   const isTrialActive = Boolean(
-    currentUser && currentUser.subscriptionStatus === 'trial' && msRemaining > 0
+    currentUser &&
+      (currentUser.subscriptionStatus === 'trial' || currentUser.subscriptionStatus === undefined) &&
+      msRemaining > 0
   );
+
+  // Notify when trial is in its last 48 hours
+  const isTrialExpiringSoon = Boolean(
+    isTrialActive && trialHoursRemaining > 0 && trialHoursRemaining <= 48
+  );
+
+  // Auto-mark expired in users array if time ran out
+  useEffect(() => {
+    if (
+      currentUser &&
+      currentUser.subscriptionStatus === 'trial' &&
+      trialEndMs > 0 &&
+      currentTime >= trialEndMs
+    ) {
+      setUsers((prev) =>
+        prev.map((u) =>
+          u.id === currentUser.id && u.subscriptionStatus === 'trial'
+            ? { ...u, subscriptionStatus: 'expired' }
+            : u
+        )
+      );
+    }
+  }, [currentUser, trialEndMs, currentTime]);
+
+  // Synchronize with Firestore when PayPal Webhook Cloud Function updates subscription
+  useEffect(() => {
+    if (!currentUser) return;
+
+    let unsub: (() => void) | null = null;
+    try {
+      unsub = onSnapshot(
+        doc(db, 'subscriptions', currentUser.id),
+        (snap) => {
+          if (snap.exists()) {
+            const data = snap.data();
+            if (data.subscriptionStatus) {
+              setUsers((prev) =>
+                prev.map((u) =>
+                  u.id === currentUser.id
+                    ? {
+                        ...u,
+                        subscriptionStatus: data.subscriptionStatus,
+                        plan: data.plan || u.plan,
+                        paidUntil: data.paidUntil || u.paidUntil,
+                        lastBilledDate: data.lastBilledDate || u.lastBilledDate,
+                        lastPaymentAmountUSD: data.lastPaymentAmountUSD || u.lastPaymentAmountUSD,
+                      }
+                    : u
+                )
+              );
+            }
+          }
+        },
+        (err) => {
+          // Non-blocking log for offline or initial empty state
+          console.debug('[Firestore Sync] Subscription listener notice:', err.message);
+        }
+      );
+    } catch (_err) {
+      // Ignored
+    }
+
+    return () => {
+      if (unsub) unsub();
+    };
+  }, [currentUser?.id]);
 
   const isSubscribed = Boolean(
     currentUser &&
@@ -311,6 +402,7 @@ export const SubscriptionAuthProvider: React.FC<{ children: ReactNode }> = ({ ch
         currentUser,
         isAuthenticated: Boolean(currentUser),
         isTrialActive,
+        isTrialExpiringSoon,
         trialDaysRemaining,
         trialHoursRemaining,
         isSubscribed,

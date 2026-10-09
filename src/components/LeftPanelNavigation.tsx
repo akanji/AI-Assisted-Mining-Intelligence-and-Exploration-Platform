@@ -24,9 +24,13 @@ import {
   Radio,
   X,
   CreditCard,
+  Lock,
+  Clock,
+  AlertTriangle,
 } from 'lucide-react';
 import { ActiveTab } from '../types';
 import { HealthcareLogo } from './HealthcareLogo';
+import { useSubscriptionAuth } from '../context/SubscriptionAuthContext';
 
 export interface LeftPanelNavigationProps {
   activeTab: ActiveTab;
@@ -73,6 +77,17 @@ export const LeftPanelNavigation: React.FC<LeftPanelNavigationProps> = ({
 
   const effectiveDarkMode = darkMode !== undefined ? darkMode : isDarkMode;
   const triggerTour = onStartTour || onOpenTour || (() => {});
+
+  const {
+    isAccessGranted,
+    isSubscribed,
+    isTrialActive,
+    isTrialExpiringSoon,
+    trialDaysRemaining,
+    trialHoursRemaining,
+    currentUser,
+  } = useSubscriptionAuth();
+
   const navSections = [
     {
       title: 'EXPLORATION & CORE',
@@ -81,29 +96,37 @@ export const LeftPanelNavigation: React.FC<LeftPanelNavigationProps> = ({
           id: 'dashboard' as ActiveTab,
           label: 'Executive Dashboard',
           icon: LayoutDashboard,
-          badge: 'Live',
-          badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
+          badge: isAccessGranted ? 'Live' : 'Locked',
+          badgeColor: isAccessGranted
+            ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+            : 'bg-rose-500/20 text-rose-300 border-rose-500/30',
         },
         {
           id: 'vision' as ActiveTab,
           label: 'Computer Vision & Core',
           icon: ScanEye,
-          badge: 'AI HSI',
-          badgeColor: 'bg-amber-500/20 text-amber-300 border-amber-500/30',
+          badge: isAccessGranted ? 'AI HSI' : 'Locked',
+          badgeColor: isAccessGranted
+            ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+            : 'bg-rose-500/20 text-rose-300 border-rose-500/30',
         },
         {
           id: 'gis_map' as ActiveTab,
           label: 'GIS Exploration Map',
           icon: MapPin,
-          badge: '5 Regions',
-          badgeColor: 'bg-purple-500/20 text-purple-300 border-purple-500/30',
+          badge: isAccessGranted ? '5 Regions' : 'Locked',
+          badgeColor: isAccessGranted
+            ? 'bg-purple-500/20 text-purple-300 border-purple-500/30'
+            : 'bg-rose-500/20 text-rose-300 border-rose-500/30',
         },
         {
           id: 'minerals' as ActiveTab,
           label: 'Mineral Database',
           icon: Database,
-          badge: 'USGS',
-          badgeColor: 'bg-stone-500/20 text-stone-300 border-stone-500/30',
+          badge: isAccessGranted ? 'USGS' : 'Locked',
+          badgeColor: isAccessGranted
+            ? 'bg-stone-500/20 text-stone-300 border-stone-500/30'
+            : 'bg-rose-500/20 text-rose-300 border-rose-500/30',
         },
       ],
     },
@@ -114,29 +137,37 @@ export const LeftPanelNavigation: React.FC<LeftPanelNavigationProps> = ({
           id: 'geochemistry' as ActiveTab,
           label: 'Geochemistry & Assays',
           icon: FlaskConical,
-          badge: 'ICP-MS',
-          badgeColor: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30',
+          badge: isAccessGranted ? 'ICP-MS' : 'Locked',
+          badgeColor: isAccessGranted
+            ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30'
+            : 'bg-rose-500/20 text-rose-300 border-rose-500/30',
         },
         {
           id: 'drillholes' as ActiveTab,
           label: 'Drill-Hole Manager',
           icon: Layers,
-          badge: '3D Log',
-          badgeColor: 'bg-blue-500/20 text-blue-300 border-blue-500/30',
+          badge: isAccessGranted ? '3D Log' : 'Locked',
+          badgeColor: isAccessGranted
+            ? 'bg-blue-500/20 text-blue-300 border-blue-500/30'
+            : 'bg-rose-500/20 text-rose-300 border-rose-500/30',
         },
         {
           id: 'vibration_signals' as ActiveTab,
           label: 'AI Vibration & Telemetry',
           icon: Radio,
-          badge: 'ANT & Bit',
-          badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
+          badge: isAccessGranted ? 'ANT & Bit' : 'Locked',
+          badgeColor: isAccessGranted
+            ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+            : 'bg-rose-500/20 text-rose-300 border-rose-500/30',
         },
         {
           id: 'economics' as ActiveTab,
           label: 'Resource & Economics',
           icon: Calculator,
-          badge: 'NPV/IRR',
-          badgeColor: 'bg-amber-500/20 text-amber-300 border-amber-500/30',
+          badge: isAccessGranted ? 'NPV/IRR' : 'Locked',
+          badgeColor: isAccessGranted
+            ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+            : 'bg-rose-500/20 text-rose-300 border-rose-500/30',
         },
       ],
     },
@@ -147,22 +178,28 @@ export const LeftPanelNavigation: React.FC<LeftPanelNavigationProps> = ({
           id: 'healthcare_esg' as ActiveTab,
           label: 'Miner Health & ESG',
           icon: ShieldCheck,
-          badge: 'Safety',
-          badgeColor: 'bg-rose-500/20 text-rose-300 border-rose-500/30',
+          badge: isAccessGranted ? 'Safety' : 'Locked',
+          badgeColor: isAccessGranted
+            ? 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+            : 'bg-rose-500/20 text-rose-300 border-rose-500/30',
         },
         {
           id: 'a2a_judge' as ActiveTab,
           label: 'A2A Judge Agent',
           icon: Cpu,
-          badge: 'Audit',
-          badgeColor: 'bg-purple-500/20 text-purple-300 border-purple-500/30',
+          badge: isAccessGranted ? 'Audit' : 'Locked',
+          badgeColor: isAccessGranted
+            ? 'bg-purple-500/20 text-purple-300 border-purple-500/30'
+            : 'bg-rose-500/20 text-rose-300 border-rose-500/30',
         },
         {
           id: 'assistant' as ActiveTab,
           label: 'MineAI Assistant',
           icon: Bot,
-          badge: 'Search',
-          badgeColor: 'bg-amber-500/20 text-amber-300 border-amber-500/30',
+          badge: isAccessGranted ? 'Search' : 'Locked',
+          badgeColor: isAccessGranted
+            ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+            : 'bg-rose-500/20 text-rose-300 border-rose-500/30',
         },
       ],
     },
@@ -173,8 +210,20 @@ export const LeftPanelNavigation: React.FC<LeftPanelNavigationProps> = ({
           id: 'subscription' as ActiveTab,
           label: 'Subscription & Billing',
           icon: CreditCard,
-          badge: '7-Day Trial',
-          badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
+          badge: !isAccessGranted
+            ? 'Required'
+            : isTrialActive
+            ? `${trialDaysRemaining}d Trial`
+            : isSubscribed
+            ? 'Active'
+            : 'Plans',
+          badgeColor: !isAccessGranted
+            ? 'bg-rose-500/20 text-rose-300 border-rose-500/40 animate-pulse'
+            : isTrialActive
+            ? isTrialExpiringSoon
+              ? 'bg-amber-500/25 text-amber-300 border-amber-500/50 animate-pulse'
+              : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+            : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
         },
       ],
     },
@@ -259,6 +308,86 @@ export const LeftPanelNavigation: React.FC<LeftPanelNavigationProps> = ({
           </div>
         )}
 
+        {/* Trial Status & License Indicator Card */}
+        {!showCollapsed && (
+          <div className="mx-3 mt-2.5 p-3 rounded-2xl bg-gradient-to-br from-black/60 to-stone-900/80 border border-stone-800 font-mono text-xs space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold flex items-center gap-1.5">
+                {isSubscribed ? (
+                  <>
+                    <CreditCard size={13} className="text-emerald-400" />
+                    <span className="text-emerald-300">License: Active</span>
+                  </>
+                ) : isTrialActive ? (
+                  <>
+                    <Clock size={13} className="text-amber-400" />
+                    <span className="text-amber-300">7-Day Free Trial</span>
+                  </>
+                ) : (
+                  <>
+                    <Lock size={13} className="text-rose-400" />
+                    <span className="text-rose-300">Access Restricted</span>
+                  </>
+                )}
+              </span>
+              <span
+                className={`px-1.5 py-0.5 rounded text-[10px] font-black border ${
+                  isSubscribed
+                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                    : isTrialActive
+                    ? isTrialExpiringSoon
+                      ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 animate-pulse'
+                      : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                    : 'bg-rose-500/20 text-rose-300 border-rose-500/40 animate-bounce'
+                }`}
+              >
+                {isSubscribed
+                  ? currentUser?.plan === 'yearly'
+                    ? '$199.99/yr'
+                    : '$19.99/mo'
+                  : isTrialActive
+                  ? `${trialDaysRemaining}d Left`
+                  : 'Expired'}
+              </span>
+            </div>
+
+            {isTrialActive ? (
+              <div className="space-y-1">
+                <div className="flex justify-between text-[10px] text-stone-400">
+                  <span>Trial Time Remaining</span>
+                  <span className="text-amber-200 font-bold">{trialHoursRemaining} Hours</span>
+                </div>
+                <div className="w-full h-1.5 rounded-full bg-stone-800 overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-amber-500 to-emerald-400 rounded-full transition-all duration-300"
+                    style={{ width: `${Math.max(8, (trialDaysRemaining / 7) * 100)}%` }}
+                  />
+                </div>
+                {isTrialExpiringSoon && (
+                  <p className="text-[10px] text-amber-300 flex items-center gap-1 pt-0.5">
+                    <AlertTriangle size={11} className="flex-shrink-0" />
+                    <span>Trial expiring soon. Upgrade now.</span>
+                  </p>
+                )}
+              </div>
+            ) : !isAccessGranted ? (
+              <div className="space-y-1.5 pt-0.5">
+                <p className="text-[10px] text-rose-200 leading-tight">
+                  7-Day trial expired. Select a subscription plan to unlock full access.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => handleSelectTab('subscription')}
+                  className="w-full py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 font-black text-[11px] transition-colors flex items-center justify-center gap-1 shadow-md cursor-pointer"
+                >
+                  <CreditCard size={12} />
+                  <span>Choose Plan ($19.99)</span>
+                </button>
+              </div>
+            ) : null}
+          </div>
+        )}
+
         {/* Scrollable Navigation Button Panel */}
         <div className="flex-1 overflow-y-auto px-3 py-3 space-y-5">
           {navSections.map((section, sIdx) => (
@@ -272,6 +401,7 @@ export const LeftPanelNavigation: React.FC<LeftPanelNavigationProps> = ({
                 {section.items.map((item) => {
                   const Icon = item.icon;
                   const isActive = activeTab === item.id;
+                  const isLockedItem = !isAccessGranted && item.id !== 'subscription';
                   return (
                     <button
                       key={item.id}
@@ -280,11 +410,13 @@ export const LeftPanelNavigation: React.FC<LeftPanelNavigationProps> = ({
                       className={`w-full group flex items-center justify-between rounded-xl px-3 py-2.5 transition-all duration-200 text-left ${
                         isActive
                           ? 'bg-gradient-to-r from-purple-900/90 to-[#3D2314] text-white shadow-md border border-amber-500/60 font-semibold'
+                          : isLockedItem
+                          ? 'text-stone-400 hover:bg-rose-950/20 hover:text-rose-200 border border-transparent opacity-85'
                           : effectiveDarkMode
                           ? 'text-stone-300 hover:bg-stone-800/60 hover:text-white border border-transparent'
                           : 'text-stone-700 hover:bg-stone-200 hover:text-stone-900 border border-transparent'
                       }`}
-                      title={item.label}
+                      title={isLockedItem ? `${item.label} (Subscription required)` : item.label}
                     >
                       <div className="flex items-center gap-3 min-w-0">
                         <div

@@ -44,6 +44,69 @@
       },
       "required": ["id", "email", "createdAt"]
     },
+    "UserSubscription": {
+      "title": "User Subscription",
+      "description": "PayPal subscription record updated securely via backend Cloud Function / webhook proxy",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "User ID or Subscription Record ID",
+          "maxLength": 128
+        },
+        "userId": {
+          "type": "string",
+          "description": "Firebase Auth UID or App User ID",
+          "maxLength": 128
+        },
+        "userEmail": {
+          "type": "string",
+          "format": "email",
+          "description": "Subscriber email address",
+          "maxLength": 256
+        },
+        "subscriptionId": {
+          "type": "string",
+          "description": "PayPal Subscription ID",
+          "maxLength": 128
+        },
+        "subscriptionStatus": {
+          "type": "string",
+          "description": "Current status of subscription",
+          "enum": ["trial", "active_monthly", "active_yearly", "cancelled", "suspended", "expired"]
+        },
+        "plan": {
+          "type": "string",
+          "description": "Subscribed plan tier",
+          "enum": ["none", "monthly", "yearly"]
+        },
+        "paidUntil": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp until which subscription is active"
+        },
+        "lastBilledDate": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last successful payment timestamp"
+        },
+        "lastPaymentAmountUSD": {
+          "type": "number",
+          "description": "Last payment amount in USD"
+        },
+        "lastEvent": {
+          "type": "string",
+          "description": "Last processed webhook event type",
+          "maxLength": 128
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last updated timestamp"
+        }
+      },
+      "required": ["id", "subscriptionStatus", "updatedAt"]
+    },
     "DrillHoleAnnotation": {
       "title": "Drill Hole Annotation",
       "description": "Geological interval note and log annotation created by team members",
@@ -125,6 +188,12 @@
         "$ref": "#/entities/UserProfile"
       },
       "description": "User profile collection indexed by Auth UID"
+    },
+    "/subscriptions/{subDocId}": {
+      "schema": {
+        "$ref": "#/entities/UserSubscription"
+      },
+      "description": "User subscription and PayPal webhook payment state maintained securely by backend"
     },
     "/drillHoleAnnotations/{annotationId}": {
       "schema": {
