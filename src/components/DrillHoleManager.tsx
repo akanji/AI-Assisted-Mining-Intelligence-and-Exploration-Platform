@@ -626,6 +626,18 @@ export const DrillHoleManager: React.FC<DrillHoleManagerProps> = ({ onNavigate }
             <span>{isCapturingGps ? 'Fixing GPS...' : 'Capture GPS Sector'}</span>
           </button>
 
+          {/* Dedicated Preview & Generate Standardized Geological Drill Log PDF Report */}
+          <button
+            id="btn-header-preview-geological-pdf"
+            onClick={() => setShowPdfPreviewModal(true)}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 via-rose-500 to-amber-400 hover:from-amber-400 hover:to-rose-400 text-stone-950 text-xs font-black transition-all shadow-md cursor-pointer border border-amber-300/40"
+            title="Preview and generate standardized geological drill log PDF report for selected borehole data"
+          >
+            <Eye size={14} className="text-stone-950" />
+            <FileText size={14} className="text-stone-950" />
+            <span>Preview &amp; Generate PDF Log</span>
+          </button>
+
           {/* Dedicated Export Button for Current Drill Log as Formatted PDF Report with Charts */}
           <button
             id="btn-header-export-pdf"
@@ -955,6 +967,17 @@ export const DrillHoleManager: React.FC<DrillHoleManagerProps> = ({ onNavigate }
               >
                 <FileSpreadsheet size={13} className="text-amber-400" />
                 <span>Hole CSV</span>
+              </button>
+
+              <button
+                id="btn-preview-selected-hole-pdf"
+                onClick={() => setShowPdfPreviewModal(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 via-rose-500 to-amber-400 hover:from-amber-400 hover:to-rose-400 text-stone-950 text-xs font-black transition-all shadow-md cursor-pointer border border-amber-300/40"
+                title={`Preview and generate standardized geological drill log PDF report for ${selectedHole.holeId}`}
+              >
+                <Eye size={13} className="text-stone-950" />
+                <FileText size={13} className="text-stone-950" />
+                <span>Preview PDF Log</span>
               </button>
 
               <button
@@ -1885,6 +1908,20 @@ export const DrillHoleManager: React.FC<DrillHoleManagerProps> = ({ onNavigate }
               </button>
 
               <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  id="btn-modal-preview-pdf"
+                  onClick={() => {
+                    setShowExportModal(false);
+                    setShowPdfPreviewModal(true);
+                  }}
+                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-amber-500 via-rose-500 to-amber-400 hover:from-amber-400 hover:to-rose-400 text-stone-950 font-black text-xs shadow-md transition-all cursor-pointer"
+                  title="Open live preview of standardized geological drill log PDF report"
+                >
+                  <Eye size={14} className="text-stone-950" />
+                  <span>Preview Standardized PDF</span>
+                </button>
+
                 <button
                   type="button"
                   id="btn-modal-export-csv"

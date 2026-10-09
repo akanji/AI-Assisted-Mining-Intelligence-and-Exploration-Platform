@@ -33,6 +33,7 @@ import {
 import { MineralVibrationProfile, TelemetryMetricPoint, Region } from '../types';
 import { downloadCSV } from '../utils/exportUtils';
 import { EquipmentARHealthDashboard } from './EquipmentARHealthDashboard';
+import { EquipmentVibrationTimeSeriesChart } from './EquipmentVibrationTimeSeriesChart';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -222,7 +223,7 @@ const MOCK_5MS_TELEMETRY = [
 export const AIVibrationSignalsCenter: React.FC = () => {
   // Navigation & Filter States
   const [activeSubTab, setActiveSubTab] = useState<
-    'datasheet' | 'blueprint' | 'comparison' | 'control_room' | 'closed_loop' | 'satellite' | 'ar_equipment_health'
+    'datasheet' | 'blueprint' | 'comparison' | 'control_room' | 'closed_loop' | 'satellite' | 'ar_equipment_health' | 'historical_vibration'
   >('control_room');
   const [selectedMineralId, setSelectedMineralId] = useState<string>('vib-cu');
   const [searchTerm, setSearchTerm] = useState<string>('');
@@ -624,6 +625,19 @@ export const AIVibrationSignalsCenter: React.FC = () => {
         </button>
 
         <button
+          id="btn-tab-historical-vibration"
+          onClick={() => setActiveSubTab('historical_vibration')}
+          className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
+            activeSubTab === 'historical_vibration'
+              ? 'bg-amber-500 text-stone-950 shadow-md font-extrabold'
+              : 'bg-stone-900/80 text-amber-300 hover:text-white border border-amber-500/40'
+          }`}
+        >
+          <Activity size={14} />
+          <span>Historical Equipment Vibration Time-Series</span>
+        </button>
+
+        <button
           id="btn-tab-equipment-ar-health"
           onClick={() => setActiveSubTab('ar_equipment_health')}
           className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
@@ -697,6 +711,11 @@ export const AIVibrationSignalsCenter: React.FC = () => {
         </button>
       </div>
 
+      {/* HISTORICAL EQUIPMENT VIBRATION TIME-SERIES LINE CHART */}
+      {activeSubTab === 'historical_vibration' && (
+        <EquipmentVibrationTimeSeriesChart />
+      )}
+
       {/* EQUIPMENT AR HEALTH DASHBOARD (Visible in Dedicated Sub-Tab & Control Room) */}
       {(activeSubTab === 'ar_equipment_health' || activeSubTab === 'control_room') && (
         <EquipmentARHealthDashboard
@@ -711,6 +730,33 @@ export const AIVibrationSignalsCenter: React.FC = () => {
       {/* SUBTAB 1: INTERACTIVE AI-MINING CONTROL ROOM & MSE CALCULATOR */}
       {activeSubTab === 'control_room' && (
         <div className="space-y-6">
+          {/* Quick-Access Banner to Historical Time-Series Line Chart */}
+          <div className="p-4 rounded-2xl bg-gradient-to-r from-stone-900 via-amber-950/40 to-stone-900 border border-amber-500/40 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-lg">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30 flex-shrink-0">
+                <Activity size={18} />
+              </div>
+              <div>
+                <h4 className="font-extrabold text-white text-xs font-['Space_Grotesk'] flex items-center gap-2">
+                  <span>Historical Equipment Vibration Time-Series Data</span>
+                  <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[10px] font-mono">7 Assets</span>
+                </h4>
+                <p className="text-[11px] text-stone-300 font-mono mt-0.5">
+                  Multi-axis piezoelectric accelerometer line charts &bull; ISO 10816-3 warning limits &bull; Bearing thermal trends.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              id="btn-quick-open-historical-vibration"
+              onClick={() => setActiveSubTab('historical_vibration')}
+              className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-stone-950 font-black text-xs transition-all shadow-md flex items-center gap-1.5 flex-shrink-0 cursor-pointer"
+            >
+              <span>View Time-Series Chart</span>
+              <ChevronRight size={13} />
+            </button>
+          </div>
+
           {/* Top Control Bar with Presets & Live Streaming Toggle */}
           <div className="p-4 rounded-xl bg-stone-900/90 border border-stone-800 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
             <div>
