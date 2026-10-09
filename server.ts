@@ -1,7 +1,6 @@
 import express from "express";
 import http from "http";
 import path from "path";
-import { fileURLToPath } from "url";
 import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
 import {
@@ -13,17 +12,13 @@ import {
 dotenv.config();
 
 const currentFilename =
-  typeof import.meta !== "undefined" && typeof import.meta.url === "string"
-    ? fileURLToPath(import.meta.url)
-    : typeof __filename !== "undefined"
+  typeof __filename !== "undefined"
     ? __filename
-    : path.join(process.cwd(), "server.ts");
+    : process.cwd();
 
 const currentDirname =
   typeof __dirname !== "undefined"
     ? __dirname
-    : typeof import.meta !== "undefined" && typeof import.meta.url === "string"
-    ? path.dirname(fileURLToPath(import.meta.url))
     : process.cwd();
 
 // Parse CLI flags and environment variables for port and host
