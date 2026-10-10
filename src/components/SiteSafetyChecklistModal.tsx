@@ -29,7 +29,7 @@ interface SafetyItem {
   category: string;
   title: string;
   description: string;
-  icon: React.ElementType;
+  icon: React.ComponentType<{ size?: number; className?: string }>;
   mandatory: boolean;
 }
 

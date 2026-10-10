@@ -6,125 +6,102 @@ import {
   saveDrillHolesToLocalForage,
   getStoredDrillHolesFromLocalForage,
   drainLocalForageSyncQueue,
-  setSimulateOfflineMode,
-  getSimulateOfflineMode,
-  subscribeToAutoSync,
-  getPendingSyncQueue,
-  getAllLocalAnnotations,
-  OfflineStorageStats,
-  QueuedSyncAction,
+  getAllStoredAnnotations,
+  LocalForageStats,
+  SyncQueueItem
 } from '../services/localForageStorage';
 import { DrillHole } from '../types';
 
-export function useLocalForageSync(onCloudSync?: (action: QueuedSyncAction) => Promise<boolean>) {
-  const [stats, setStats] = useState<OfflineStorageStats>({
-    drillholeCount: 0,
-    targetCount: 0,
-    annotationCount: 0,
-    pendingSyncCount: 0,
-    lastSyncedAt: null,
-    storageDriver: 'IndexedDB',
-    isSimulatingOffline: false,
-  });
-
+export function useLocalForageSync() {
   const [isOnline, setIsOnline] = useState<boolean>(() => {
-    if (typeof navigator !== 'undefined') {
-      return navigator.onLine;
-    }
-    return true;
+    return typeof navigator !== 'undefined' ? navigator.onLine : true;
   });
-
-  const [isSimulatingOffline, setIsSimulatingOffline] = useState<boolean>(getSimulateOfflineMode());
-  const [pendingActions, setPendingActions] = useState<QueuedSyncAction[]>([]);
+  const [stats, setStats] = useState<LocalForageStats | null>(null);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
-  const [lastSyncMessage, setLastSyncMessage] = useState<string | null>(null);
+  const [lastSyncResult, setLastSyncResult] = useState<{ syncedCount: number; errorsCount: number } | null>(null);
+  const [storedAnnotations, setStoredAnnotations] = useState<Record<string, string[]>>({});
 
-  // Refresh stats and queue
   const refreshStats = useCallback(async () => {
-    const s = await getLocalForageStats();
-    setStats(s);
-    const queue = await getPendingSyncQueue();
-    setPendingActions(queue);
+    try {
+      const currentStats = await getLocalForageStats();
+      setStats(currentStats);
+      const annos = await getAllStoredAnnotations();
+      setStoredAnnotations(annos);
+    } catch (e) {
+      console.warn('Error refreshing localForage stats:', e);
+    }
   }, []);
 
-  useEffect(() => {
-    initLocalForageStorage().then(() => {
-      refreshStats();
-    });
+  const triggerSync = useCallback(async () => {
+    if (isSyncing) return;
+    setIsSyncing(true);
+    try {
+      const result = await drainLocalForageSyncQueue();
+      setLastSyncResult(result);
+      await refreshStats();
+    } catch (e) {
+      console.error('Sync failed:', e);
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [isSyncing, refreshStats]);
 
-    const handleOnline = () => setIsOnline(true);
-    const handleOffline = () => setIsOnline(false);
+  // Initial setup and network listeners
+  useEffect(() => {
+    let mounted = true;
+
+    const setup = async () => {
+      await initLocalForageStorage();
+      if (mounted) {
+        await refreshStats();
+      }
+    };
+    setup();
+
+    const handleOnline = () => {
+      setIsOnline(true);
+      // Auto-sync upon reconnection
+      triggerSync();
+    };
+
+    const handleOffline = () => {
+      setIsOnline(false);
+    };
 
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
 
-    const unsubscribe = subscribeToAutoSync((event) => {
-      setLastSyncMessage(event.message);
-      if (event.type === 'sync_start') {
-        setIsSyncing(true);
-      } else if (event.type === 'sync_complete' || event.type === 'sync_error') {
-        setIsSyncing(false);
-        refreshStats();
-      }
-    });
-
     return () => {
+      mounted = false;
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
-      unsubscribe();
     };
+  }, [triggerSync, refreshStats]);
+
+  const addLocalAnnotation = useCallback(async (holeId: string, intervalIdx: number, text: string) => {
+    await saveAnnotationLocally(holeId, intervalIdx, text);
+    await refreshStats();
   }, [refreshStats]);
 
-  const toggleSimulatedOffline = useCallback(() => {
-    const nextState = !isSimulatingOffline;
-    setSimulateOfflineMode(nextState);
-    setIsSimulatingOffline(nextState);
-    refreshStats();
-  }, [isSimulatingOffline, refreshStats]);
+  const persistDrillHoles = useCallback(async (holes: DrillHole[]) => {
+    await saveDrillHolesToLocalForage(holes);
+    await refreshStats();
+  }, [refreshStats]);
 
-  const triggerSync = useCallback(async () => {
-    setIsSyncing(true);
-    try {
-      await drainLocalForageSyncQueue(onCloudSync);
-    } finally {
-      setIsSyncing(false);
-      refreshStats();
-    }
-  }, [onCloudSync, refreshStats]);
-
-  const addLocalAnnotation = useCallback(
-    async (holeId: string, intervalKey: string, noteText: string) => {
-      const result = await saveAnnotationLocally(holeId, intervalKey, noteText, isOnline && !isSimulatingOffline);
-      await refreshStats();
-      return result;
-    },
-    [isOnline, isSimulatingOffline, refreshStats]
-  );
-
-  const cacheDrillHoles = useCallback(
-    async (holes: DrillHole[]) => {
-      await saveDrillHolesToLocalForage(holes);
-      await refreshStats();
-    },
-    [refreshStats]
-  );
-
-  const effectiveOnline = isOnline && !isSimulatingOffline;
+  const toggleSimulatedConnection = useCallback(() => {
+    setIsOnline((prev) => !prev);
+  }, []);
 
   return {
-    isOnline: effectiveOnline,
-    rawIsOnline: isOnline,
-    isSimulatingOffline,
-    toggleSimulatedOffline,
+    isOnline,
     stats,
-    pendingActions,
     isSyncing,
-    lastSyncMessage,
-    refreshStats,
+    lastSyncResult,
+    storedAnnotations,
     triggerSync,
+    refreshStats,
     addLocalAnnotation,
-    cacheDrillHoles,
-    getStoredDrillHoles: getStoredDrillHolesFromLocalForage,
-    getAllLocalAnnotations,
+    persistDrillHoles,
+    toggleSimulatedConnection
   };
 }

@@ -6,185 +6,158 @@ import { DrillHole, DrillInterval } from '../types';
 import {
   RotateCcw,
   Layers,
-  Eye,
-  Camera,
   Compass,
   Maximize2,
-  ZoomIn,
-  Sliders,
-  Sparkles,
-  Info,
-  CheckCircle,
-  HelpCircle,
+  Minimize2,
+  Flame,
   Activity,
   Play,
   Pause,
-  Box,
-  MapPin,
-  Flame,
-  Download,
+  HelpCircle
 } from 'lucide-react';
 
-// Lithology colors palette for 3D PBR materials
-const LITHOLOGY_COLORS: Record<string, { color: string; emissive?: string; roughness: number; metalness: number }> = {
-  'Glacial Till & Overburden': { color: '#92400e', roughness: 0.9, metalness: 0.1 },
-  'Overburden': { color: '#92400e', roughness: 0.9, metalness: 0.1 },
-  'Quartz-Feldspar Porphyry': { color: '#9333ea', emissive: '#3b0764', roughness: 0.4, metalness: 0.3 },
-  'Quartz-Carbonate Vein Stockwork': { color: '#f59e0b', emissive: '#78350f', roughness: 0.3, metalness: 0.4 },
-  'Mineralized Quartz Vein (Au)': { color: '#eab308', emissive: '#ca8a04', roughness: 0.2, metalness: 0.6 },
-  'Sheared Timiskaming Conglomerate': { color: '#52525b', roughness: 0.8, metalness: 0.2 },
-  'Pillowed Tholeiitic Basalt': { color: '#059669', roughness: 0.7, metalness: 0.2 },
-  'Mafic Volcanics': { color: '#047857', roughness: 0.7, metalness: 0.2 },
-  'Spodumene Pegmatite Dyke': { color: '#db2777', emissive: '#831843', roughness: 0.3, metalness: 0.4 },
-  'Argillic Siltstone': { color: '#475569', roughness: 0.85, metalness: 0.1 },
-  'Carbonaceous Shale': { color: '#1e293b', roughness: 0.9, metalness: 0.1 },
-  'Decalcified Silty Limestone': { color: '#0284c7', roughness: 0.6, metalness: 0.2 },
-  'Jasperoid Alteration Zone': { color: '#dc2626', emissive: '#7f1d1d', roughness: 0.4, metalness: 0.3 },
-  'Biotite-Granite Footwall': { color: '#ea580c', roughness: 0.5, metalness: 0.3 },
+interface DrillHole3DVisualizerR3FProps {
+  drillhole: DrillHole;
+  allDrillholes?: DrillHole[];
+  onSelectInterval?: (interval: DrillInterval, index: number) => void;
+  selectedIntervalIndex?: number | null;
+}
+
+// Convert lithology name to color
+const getLithologyColor = (lithology: string): string => {
+  const lower = (lithology || '').toLowerCase();
+  if (lower.includes('quartz') || lower.includes('breccia') || lower.includes('pegmatite')) return '#f59e0b'; // Gold / amber
+  if (lower.includes('basalt') || lower.includes('gabbro')) return '#334155'; // Dark slate
+  if (lower.includes('andesite') || lower.includes('diorite')) return '#059669'; // Emerald
+  if (lower.includes('granite') || lower.includes('rhyolite')) return '#ec4899'; // Pinkish
+  if (lower.includes('sulfide') || lower.includes('chalcopyrite')) return '#e11d48'; // High grade red
+  if (lower.includes('sediment') || lower.includes('shale')) return '#854d0e'; // Brown
+  if (lower.includes('skarn') || lower.includes('limestone')) return '#0284c7'; // Cyan blue
+  return '#64748b'; // default slate
 };
 
-const DEFAULT_LITHO_MATERIAL = { color: '#7c3aed', roughness: 0.5, metalness: 0.2 };
+// Helper for depths and grades across DrillInterval shape
+const getFromDepth = (interval: DrillInterval): number => {
+  return interval.fromDepthM !== undefined ? interval.fromDepthM : interval.from;
+};
 
-interface DrillHole3DVisualizerR3FProps {
-  selectedHole: DrillHole;
-  allDrillholes?: DrillHole[];
-  onSelectHole?: (hole: DrillHole) => void;
-  className?: string;
-}
+const getToDepth = (interval: DrillInterval): number => {
+  return interval.toDepthM !== undefined ? interval.toDepthM : interval.to;
+};
 
-// Convert downhole depth and survey (Dip/Azimuth) to 3D Cartesian coordinates
-function calculateTrajectoryPoint(
-  depth: number,
-  dipDeg: number,
-  azimuthDeg: number,
-  verticalExaggeration: number,
-  collarOffset: [number, number, number] = [0, 0, 0]
-): THREE.Vector3 {
-  // Dip in mining is measured downwards from horizontal:
-  // e.g. Dip = -60 deg (or 60 deg downwards).
-  const dipAbs = Math.abs(dipDeg);
-  const dipRad = (dipAbs * Math.PI) / 180;
-  const azRad = (azimuthDeg * Math.PI) / 180;
+const getGoldGrade = (interval: DrillInterval): number | undefined => {
+  if (interval.assayAuGpt !== undefined) return interval.assayAuGpt;
+  if (interval.primaryGradeValue !== undefined && interval.gradeUnit?.toLowerCase().includes('g/t')) {
+    return interval.primaryGradeValue;
+  }
+  return undefined;
+};
 
-  // Horizontal travel
-  const horizontalDist = depth * Math.cos(dipRad);
-  const dx = horizontalDist * Math.sin(azRad);
-  const dz = horizontalDist * Math.cos(azRad);
-  const dy = -depth * Math.sin(dipRad) * verticalExaggeration;
+const getCopperGrade = (interval: DrillInterval): number | undefined => {
+  if (interval.assayCuPct !== undefined) return interval.assayCuPct;
+  if (interval.primaryGradeValue !== undefined && interval.gradeUnit?.includes('%')) {
+    return interval.primaryGradeValue;
+  }
+  return undefined;
+};
 
-  return new THREE.Vector3(collarOffset[0] + dx, collarOffset[1] + dy, collarOffset[2] + dz);
-}
-
-// 3D Core Segment Mesh Component
-interface CoreIntervalMeshProps {
+// Visualized single borehole cylinder segment
+const StrataIntervalMesh: React.FC<{
+  start: [number, number, number];
+  end: [number, number, number];
   interval: DrillInterval;
-  holeDip: number;
-  holeAzimuth: number;
-  coreRadius: number;
-  verticalExaggeration: number;
+  index: number;
   isSelected: boolean;
-  isHovered: boolean;
-  onHover: (hover: boolean) => void;
-  onSelect: () => void;
-  collarOffset?: [number, number, number];
-}
+  coreRadius: number;
+  onSelect?: () => void;
+  showGradeGlow: boolean;
+}> = ({ start, end, interval, index, isSelected, coreRadius, onSelect, showGradeGlow }) => {
+  const [hovered, setHovered] = useState(false);
 
-const CoreIntervalMesh: React.FC<CoreIntervalMeshProps> = ({
-  interval,
-  holeDip,
-  holeAzimuth,
-  coreRadius,
-  verticalExaggeration,
-  isSelected,
-  isHovered,
-  onHover,
-  onSelect,
-  collarOffset = [0, 0, 0],
-}) => {
-  const meshRef = useRef<THREE.Mesh>(null);
-
-  // Compute start, end and midpoint vectors
-  const { pStart, pEnd, pMid, length, orientationQuaternion } = useMemo(() => {
-    const start = calculateTrajectoryPoint(interval.fromDepth, holeDip, holeAzimuth, verticalExaggeration, collarOffset);
-    const end = calculateTrajectoryPoint(interval.toDepth, holeDip, holeAzimuth, verticalExaggeration, collarOffset);
-
-    const mid = new THREE.Vector3().addVectors(start, end).multiplyScalar(0.5);
-    const dir = new THREE.Vector3().subVectors(end, start);
+  const { position, quaternion, height } = useMemo(() => {
+    const vStart = new THREE.Vector3(...start);
+    const vEnd = new THREE.Vector3(...end);
+    const dir = new THREE.Vector3().subVectors(vEnd, vStart);
     const len = dir.length();
+    const midpoint = new THREE.Vector3().addVectors(vStart, vEnd).multiplyScalar(0.5);
 
-    // Orientation: Cylinder default orientation is along Y-axis (0, 1, 0)
-    const normalizedDir = dir.clone().normalize();
-    const upAxis = new THREE.Vector3(0, 1, 0);
-    const quat = new THREE.Quaternion().setFromUnitVectors(upAxis, normalizedDir);
+    // Orientation: Cylinder default orientation is along Y-axis
+    const yAxis = new THREE.Vector3(0, 1, 0);
+    const normDir = dir.clone().normalize();
+    const quat = new THREE.Quaternion().setFromUnitVectors(yAxis, normDir);
 
     return {
-      pStart: start,
-      pEnd: end,
-      pMid: mid,
-      length: len,
-      orientationQuaternion: quat,
+      position: [midpoint.x, midpoint.y, midpoint.z] as [number, number, number],
+      quaternion: quat,
+      height: Math.max(len, 0.2)
     };
-  }, [interval.fromDepth, interval.toDepth, holeDip, holeAzimuth, verticalExaggeration, collarOffset]);
+  }, [start, end]);
 
-  // Determine material properties
-  const lithoMat = LITHOLOGY_COLORS[interval.lithology] || DEFAULT_LITHO_MATERIAL;
-
-  // Grade boost for economic intercepts
-  const isHighGrade = (interval.assayAuGpt && interval.assayAuGpt > 2) || (interval.assayLiPct && interval.assayLiPct > 1.2);
-
-  const radius = coreRadius * (isSelected ? 1.45 : isHovered ? 1.25 : 1.0);
+  const fromM = getFromDepth(interval);
+  const toM = getToDepth(interval);
+  const auGrade = getGoldGrade(interval);
+  const cuGrade = getCopperGrade(interval);
+  const baseColor = useMemo(() => interval.color || getLithologyColor(interval.lithology), [interval]);
+  const hasHighGrade = (auGrade || 0) > 1.5 || (cuGrade || 0) > 1.0 || (interval.assayLiPct || 0) > 1.2;
 
   return (
-    <group position={pMid} quaternion={orientationQuaternion}>
+    <group position={position} quaternion={quaternion}>
       <mesh
-        ref={meshRef}
-        onClick={(e) => {
-          e.stopPropagation();
-          onSelect();
-        }}
         onPointerOver={(e) => {
           e.stopPropagation();
-          onHover(true);
+          setHovered(true);
         }}
-        onPointerOut={() => onHover(false)}
+        onPointerOut={(e) => {
+          e.stopPropagation();
+          setHovered(false);
+        }}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (onSelect) onSelect();
+        }}
       >
-        <cylinderGeometry args={[radius, radius, Math.max(0.2, length), 24]} />
+        <cylinderGeometry
+          args={[
+            coreRadius * (isSelected ? 1.4 : hovered ? 1.25 : 1),
+            coreRadius * (isSelected ? 1.4 : hovered ? 1.25 : 1),
+            height,
+            24
+          ]}
+        />
         <meshStandardMaterial
-          color={isSelected ? '#38bdf8' : isHovered ? '#fbbf24' : lithoMat.color}
-          emissive={
-            isSelected
-              ? '#0284c7'
-              : isHovered
-              ? '#d97706'
-              : isHighGrade
-              ? lithoMat.emissive || '#ca8a04'
-              : '#000000'
-          }
-          emissiveIntensity={isSelected ? 0.6 : isHovered ? 0.8 : isHighGrade ? 0.5 : 0.05}
-          roughness={lithoMat.roughness}
-          metalness={lithoMat.metalness}
+          color={isSelected ? '#38bdf8' : hovered ? '#fbbf24' : baseColor}
+          roughness={0.35}
+          metalness={hasHighGrade ? 0.6 : 0.2}
+          emissive={isSelected ? '#0284c7' : showGradeGlow && hasHighGrade ? '#b45309' : '#000000'}
+          emissiveIntensity={isSelected ? 0.7 : showGradeGlow && hasHighGrade ? 0.5 : 0}
         />
       </mesh>
 
-      {/* Interval Callout Badge when selected or hovered */}
-      {(isSelected || isHovered) && (
-        <Html position={[radius * 2, 0, 0]} distanceFactor={35} center>
-          <div className="bg-stone-900/95 border border-amber-400 text-stone-100 p-2 rounded-lg shadow-xl text-xs backdrop-blur-md pointer-events-none whitespace-nowrap min-w-[160px]">
-            <div className="font-bold text-amber-400 flex items-center justify-between gap-2">
+      {/* Hover or Selected HTML Tooltip floating in 3D */}
+      {(hovered || isSelected) && (
+        <Html distanceFactor={25} position={[coreRadius + 0.5, 0, 0]} style={{ pointerEvents: 'none' }}>
+          <div className="bg-slate-900/95 border border-cyan-500/40 backdrop-blur-md px-3 py-2 rounded-lg shadow-2xl text-xs min-w-[160px] text-white pointer-events-none">
+            <div className="flex items-center justify-between font-bold text-cyan-400 mb-1 border-b border-slate-700/60 pb-1">
               <span>{interval.lithology}</span>
-              <span className="text-[10px] bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded">
-                {interval.fromDepth}m - {interval.toDepth}m
+              <span className="text-[10px] bg-cyan-950 text-cyan-300 px-1.5 py-0.5 rounded">
+                #{index + 1}
               </span>
             </div>
-            {interval.assayAuGpt !== undefined && (
-              <div className="text-[11px] text-yellow-300 mt-1">Au: {interval.assayAuGpt} g/t</div>
-            )}
-            {interval.assayLiPct !== undefined && (
-              <div className="text-[11px] text-pink-300 mt-1">Li₂O: {interval.assayLiPct}%</div>
-            )}
-            {interval.rqdPercent !== undefined && (
-              <div className="text-[10px] text-stone-400">RQD: {interval.rqdPercent}% | Rec: {interval.recoveryPercent || 95}%</div>
-            )}
+            <div className="space-y-0.5 text-slate-300 text-[11px]">
+              <div>Depth: {fromM}m – {toM}m ({(toM - fromM).toFixed(1)}m)</div>
+              {auGrade !== undefined && (
+                <div className="text-amber-400 font-semibold">Au Grade: {auGrade} g/t</div>
+              )}
+              {cuGrade !== undefined && (
+                <div className="text-emerald-400 font-semibold">Cu Grade: {cuGrade} %</div>
+              )}
+              {interval.assayLiPct !== undefined && (
+                <div className="text-purple-400 font-semibold">Li2O Grade: {interval.assayLiPct} %</div>
+              )}
+              {interval.rqdPercent !== undefined && (
+                <div className="text-slate-400">RQD: {interval.rqdPercent}%</div>
+              )}
+            </div>
           </div>
         </Html>
       )}
@@ -192,695 +165,577 @@ const CoreIntervalMesh: React.FC<CoreIntervalMeshProps> = ({
   );
 };
 
-// 3D Borehole Full Assembly
-interface BoreholeRigProps {
-  drillhole: DrillHole;
-  isSelectedHole: boolean;
-  selectedInterval: DrillInterval | null;
-  hoveredInterval: DrillInterval | null;
-  onSelectInterval: (interval: DrillInterval) => void;
-  onHoverInterval: (interval: DrillInterval | null) => void;
-  onSelectHole?: (hole: DrillHole) => void;
-  coreRadius: number;
-  verticalExaggeration: number;
-  showDepthMarkers: boolean;
-  collarOffset?: [number, number, number];
-}
+// Collar beacon component at surface
+const CollarBeacon: React.FC<{
+  position: [number, number, number];
+  holeId: string;
+  isMain: boolean;
+}> = ({ position, holeId, isMain }) => {
+  const ringRef = useRef<THREE.Mesh>(null);
 
-const BoreholeRig: React.FC<BoreholeRigProps> = ({
-  drillhole,
-  isSelectedHole,
-  selectedInterval,
-  hoveredInterval,
-  onSelectInterval,
-  onHoverInterval,
-  onSelectHole,
-  coreRadius,
-  verticalExaggeration,
-  showDepthMarkers,
-  collarOffset = [0, 0, 0],
-}) => {
-  const collarPos = useMemo(() => new THREE.Vector3(...collarOffset), [collarOffset]);
-  const endPos = useMemo(
-    () => calculateTrajectoryPoint(drillhole.totalDepthM, drillhole.dip, drillhole.azimuth, verticalExaggeration, collarOffset),
-    [drillhole.totalDepthM, drillhole.dip, drillhole.azimuth, verticalExaggeration, collarOffset]
-  );
-
-  // Depth calipers every 50m
-  const depthTicks = useMemo(() => {
-    const ticks: number[] = [];
-    const intervalM = 50;
-    for (let d = intervalM; d <= drillhole.totalDepthM; d += intervalM) {
-      ticks.push(d);
-    }
-    return ticks;
-  }, [drillhole.totalDepthM]);
-
-  return (
-    <group>
-      {/* Collar Beacon */}
-      <group position={collarPos}>
-        {/* Collar Survey Cone / Pin */}
-        <mesh position={[0, 0.8, 0]}>
-          <coneGeometry args={[0.7, 1.6, 16]} />
-          <meshStandardMaterial
-            color={isSelectedHole ? '#f59e0b' : '#38bdf8'}
-            emissive={isSelectedHole ? '#d97706' : '#0284c7'}
-            emissiveIntensity={0.6}
-          />
-        </mesh>
-        <mesh position={[0, 0.05, 0]}>
-          <cylinderGeometry args={[1.2, 1.2, 0.1, 24]} />
-          <meshStandardMaterial color="#64748b" roughness={0.8} />
-        </mesh>
-
-        {/* Collar Label */}
-        <Html position={[0, 2.4, 0]} distanceFactor={30} center>
-          <div
-            onClick={() => onSelectHole && onSelectHole(drillhole)}
-            className={`cursor-pointer px-2.5 py-1 rounded-md text-[11px] font-bold border shadow-lg transition-transform hover:scale-110 ${
-              isSelectedHole
-                ? 'bg-amber-500 text-stone-950 border-amber-300 font-extrabold'
-                : 'bg-stone-900/90 text-stone-200 border-stone-700'
-            }`}
-          >
-            {drillhole.holeId} ({drillhole.totalDepthM}m)
-          </div>
-        </Html>
-      </group>
-
-      {/* Trajectory Guide Line */}
-      <line>
-        <bufferGeometry
-          attach="geometry"
-          onUpdate={(geo) => {
-            geo.setFromPoints([collarPos, endPos]);
-          }}
-        />
-        <lineBasicMaterial
-          attach="material"
-          color={isSelectedHole ? '#fbbf24' : '#64748b'}
-          linewidth={2}
-          transparent
-          opacity={0.6}
-        />
-      </line>
-
-      {/* Core Lithology Intervals */}
-      {drillhole.intervals.map((interval, idx) => (
-        <CoreIntervalMesh
-          key={`${drillhole.holeId}-int-${idx}`}
-          interval={interval}
-          holeDip={drillhole.dip}
-          holeAzimuth={drillhole.azimuth}
-          coreRadius={coreRadius}
-          verticalExaggeration={verticalExaggeration}
-          isSelected={selectedInterval?.fromDepth === interval.fromDepth && selectedInterval?.toDepth === interval.toDepth && isSelectedHole}
-          isHovered={hoveredInterval?.fromDepth === interval.fromDepth && hoveredInterval?.toDepth === interval.toDepth}
-          onHover={(hover) => onHoverInterval(hover ? interval : null)}
-          onSelect={() => {
-            if (onSelectHole && !isSelectedHole) onSelectHole(drillhole);
-            onSelectInterval(interval);
-          }}
-          collarOffset={collarOffset}
-        />
-      ))}
-
-      {/* End of Hole (EOH) Marker */}
-      <group position={endPos}>
-        <mesh>
-          <sphereGeometry args={[coreRadius * 1.5, 16, 16]} />
-          <meshStandardMaterial color="#ef4444" emissive="#b91c1c" emissiveIntensity={0.6} />
-        </mesh>
-        <Html position={[0, -1.2, 0]} distanceFactor={35} center>
-          <div className="bg-rose-950/90 border border-rose-500 text-rose-200 text-[10px] font-mono px-1.5 py-0.5 rounded shadow pointer-events-none whitespace-nowrap">
-            EOH: {drillhole.totalDepthM}m
-          </div>
-        </Html>
-      </group>
-
-      {/* Depth Calipers / Tick Marks along trajectory */}
-      {showDepthMarkers &&
-        depthTicks.map((d) => {
-          const tickPos = calculateTrajectoryPoint(d, drillhole.dip, drillhole.azimuth, verticalExaggeration, collarOffset);
-          return (
-            <group key={`tick-${d}`} position={tickPos}>
-              <mesh>
-                <ringGeometry args={[coreRadius * 1.1, coreRadius * 1.6, 16]} />
-                <meshBasicMaterial color="#e2e8f0" side={THREE.DoubleSide} transparent opacity={0.6} />
-              </mesh>
-              <Html position={[coreRadius * 2.2, 0, 0]} distanceFactor={40} center>
-                <div className="text-[9px] font-mono font-bold bg-stone-900/80 text-stone-300 px-1 py-0.5 rounded border border-stone-700 pointer-events-none whitespace-nowrap">
-                  {d}m
-                </div>
-              </Html>
-            </group>
-          );
-        })}
-    </group>
-  );
-};
-
-// 3D Geological Strata Horizon Planes
-interface StrataHorizonsProps {
-  showHorizons: boolean;
-  opacity: number;
-  verticalExaggeration: number;
-  boundsRadius: number;
-}
-
-const StrataHorizons: React.FC<StrataHorizonsProps> = ({
-  showHorizons,
-  opacity,
-  verticalExaggeration,
-  boundsRadius,
-}) => {
-  if (!showHorizons) return null;
-
-  const width = Math.max(80, boundsRadius * 2.4);
-
-  // Depth horizons typical in the mining camp:
-  // 1. Overburden interface at -15m
-  // 2. Main Mineralized shear zone contact at -90m
-  // 3. Footwall contact at -180m
-  const horizons = [
-    { name: 'Overburden Base Contact', depth: 15, color: '#b45309', label: 'Overburden Contact (-15m)' },
-    { name: 'Mineralized Shear Horizon', depth: 95, color: '#f59e0b', label: 'Au-Li Mineralized Horizon (-95m)' },
-    { name: 'Footwall Bedrock Contact', depth: 190, color: '#047857', label: 'Footwall Mafic Contact (-190m)' },
-  ];
-
-  return (
-    <group>
-      {horizons.map((h, i) => {
-        const y = -h.depth * verticalExaggeration;
-        return (
-          <group key={`horizon-${i}`} position={[0, y, 0]}>
-            <mesh rotation={[-Math.PI / 2, 0, 0]}>
-              <planeGeometry args={[width, width, 12, 12]} />
-              <meshStandardMaterial
-                color={h.color}
-                transparent
-                opacity={opacity * 0.35}
-                wireframe={false}
-                side={THREE.DoubleSide}
-                depthWrite={false}
-              />
-            </mesh>
-            <mesh rotation={[-Math.PI / 2, 0, 0]}>
-              <planeGeometry args={[width, width, 8, 8]} />
-              <meshBasicMaterial
-                color={h.color}
-                wireframe
-                transparent
-                opacity={opacity * 0.25}
-              />
-            </mesh>
-            {/* Horizon Label */}
-            <Html position={[-width / 2 + 5, 0.5, -width / 2 + 5]} distanceFactor={45}>
-              <div className="bg-stone-900/90 border border-stone-600 text-stone-300 text-[10px] px-2 py-0.5 rounded shadow pointer-events-none whitespace-nowrap">
-                {h.label}
-              </div>
-            </Html>
-          </group>
-        );
-      })}
-    </group>
-  );
-};
-
-// Auto-rotator helper component
-function AutoRotateController({ enabled, speed = 0.5 }: { enabled: boolean; speed?: number }) {
   useFrame((_, delta) => {
-    // Rotation is typically handled smoothly via OrbitControls autoRotate property
+    if (ringRef.current) {
+      ringRef.current.rotation.z += delta * 0.8;
+    }
   });
-  return null;
-}
 
-export const DrillHole3DVisualizerR3F: React.FC<DrillHole3DVisualizerR3FProps> = ({
-  selectedHole,
-  allDrillholes = [selectedHole],
-  onSelectHole,
-  className = '',
-}) => {
-  // Visualizer settings state
-  const [viewMode, setViewMode] = useState<'single' | 'all'>('single');
-  const [verticalExaggeration, setVerticalExaggeration] = useState<number>(1.0);
-  const [coreRadius, setCoreRadius] = useState<number>(0.8);
-  const [showDepthMarkers, setShowDepthMarkers] = useState<boolean>(true);
-  const [showStrataHorizons, setShowStrataHorizons] = useState<boolean>(true);
-  const [strataOpacity, setStrataOpacity] = useState<number>(0.65);
-  const [showGrid, setShowGrid] = useState<boolean>(true);
-  const [autoRotate, setAutoRotate] = useState<boolean>(false);
-  const [selectedInterval, setSelectedInterval] = useState<DrillInterval | null>(
-    selectedHole.intervals[0] || null
+  return (
+    <group position={position}>
+      {/* Surface marker ring */}
+      <mesh ref={ringRef} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[0.4, 0.7, 32]} />
+        <meshBasicMaterial color={isMain ? '#38bdf8' : '#94a3b8'} side={THREE.DoubleSide} transparent opacity={0.8} />
+      </mesh>
+      {/* Beacon vertical pin */}
+      <mesh position={[0, 0.8, 0]}>
+        <cylinderGeometry args={[0.06, 0.06, 1.6, 12]} />
+        <meshStandardMaterial color={isMain ? '#0284c7' : '#64748b'} emissive={isMain ? '#0284c7' : '#000'} emissiveIntensity={0.5} />
+      </mesh>
+      {/* Collar top sphere */}
+      <mesh position={[0, 1.65, 0]}>
+        <sphereGeometry args={[0.22, 16, 16]} />
+        <meshStandardMaterial color={isMain ? '#38bdf8' : '#cbd5e1'} emissive={isMain ? '#38bdf8' : '#64748b'} emissiveIntensity={0.8} />
+      </mesh>
+      {/* 3D collar label */}
+      <Html position={[0, 2.2, 0]} center distanceFactor={30}>
+        <div className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold whitespace-nowrap shadow-lg border ${
+          isMain ? 'bg-cyan-950/90 border-cyan-400 text-cyan-200' : 'bg-slate-900/80 border-slate-700 text-slate-300'
+        }`}>
+          {holeId}
+        </div>
+      </Html>
+    </group>
   );
-  const [hoveredInterval, setHoveredInterval] = useState<DrillInterval | null>(null);
+};
 
-  const controlsRef = useRef<any>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+// 3D Geological Strata Horizons
+const GeologicalStrataHorizon: React.FC<{
+  depth: number;
+  color: string;
+  label: string;
+  radius: number;
+}> = ({ depth, color, label, radius }) => {
+  return (
+    <group position={[0, -depth, 0]}>
+      <mesh rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[radius * 2, radius * 2, 1, 1]} />
+        <meshStandardMaterial
+          color={color}
+          transparent
+          opacity={0.15}
+          side={THREE.DoubleSide}
+          depthWrite={false}
+        />
+      </mesh>
+      {/* Boundary ring */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[radius - 0.2, radius, 48]} />
+        <meshBasicMaterial color={color} transparent opacity={0.4} side={THREE.DoubleSide} />
+      </mesh>
+      <Html position={[radius, 0, 0]} distanceFactor={35}>
+        <div className="bg-slate-900/80 border border-slate-700 text-[9px] text-slate-300 font-mono px-1.5 py-0.5 rounded">
+          {label} (-{depth.toFixed(0)}m)
+        </div>
+      </Html>
+    </group>
+  );
+};
 
-  // Compute spatial bounds for multi-hole layout
-  const holesWithCoordinates = useMemo(() => {
-    // If holes have UTM or collar coordinates, calculate relative collar offsets
-    const baseEasting = selectedHole.collarEasting || 0;
-    const baseNorthing = selectedHole.collarNorthing || 0;
-    const baseElev = selectedHole.collarElevationM || 0;
+// Full Hole 3D Model
+const DrillHole3DMesh: React.FC<{
+  hole: DrillHole;
+  isMain: boolean;
+  vertExaggeration: number;
+  coreRadius: number;
+  selectedIntervalIndex?: number | null;
+  onSelectInterval?: (interval: DrillInterval, index: number) => void;
+  showGradeGlow: boolean;
+}> = ({ hole, isMain, vertExaggeration, coreRadius, selectedIntervalIndex, onSelectInterval, showGradeGlow }) => {
+  // Compute 3D points along path based on dip & azimuth
+  const segments = useMemo(() => {
+    const dip = hole.dipDeg !== undefined ? hole.dipDeg : -90;
+    const azimuth = hole.azimuthDeg !== undefined ? hole.azimuthDeg : 0;
+    const dipRad = (dip * Math.PI) / 180;
+    const azRad = (azimuth * Math.PI) / 180;
 
-    return allDrillholes.map((hole, index) => {
-      let x = 0;
-      let z = 0;
-      let y = 0;
+    const cosDip = Math.cos(dipRad);
+    const sinDip = Math.sin(dipRad);
+    const dxMeter = Math.cos(azRad) * cosDip;
+    const dzMeter = Math.sin(azRad) * cosDip;
+    const dyMeter = sinDip * vertExaggeration;
 
-      if (hole.collarEasting && baseEasting) {
-        x = (hole.collarEasting - baseEasting) * 0.2; // scale for visualization viewport
-        z = ((hole.collarNorthing || 0) - baseNorthing) * 0.2;
-        y = ((hole.collarElevationM || 0) - baseElev) * 0.2;
-      } else {
-        // Space them in a grid if coordinates are not fully defined
-        const col = index % 3;
-        const row = Math.floor(index / 3);
-        x = (col - 1) * 35;
-        z = (row - 1) * 35;
-      }
+    // Collar positioning offset from Easting/Northing or lat/lng
+    const collarX = hole.collarEasting ? (hole.collarEasting % 1000) * 0.1 : 0;
+    const collarZ = hole.collarNorthing ? (hole.collarNorthing % 1000) * 0.1 : 0;
+    const collarY = 0;
+
+    const intervals = hole.intervals || [];
+    return intervals.map((interval, idx) => {
+      const startDepth = getFromDepth(interval);
+      const endDepth = getToDepth(interval);
+
+      const startPos: [number, number, number] = [
+        collarX + dxMeter * startDepth,
+        collarY + dyMeter * startDepth,
+        collarZ + dzMeter * startDepth
+      ];
+
+      const endPos: [number, number, number] = [
+        collarX + dxMeter * endDepth,
+        collarY + dyMeter * endDepth,
+        collarZ + dzMeter * endDepth
+      ];
 
       return {
-        hole,
-        offset: [x, y, z] as [number, number, number],
+        interval,
+        index: idx,
+        startPos,
+        endPos
       };
     });
-  }, [allDrillholes, selectedHole]);
+  }, [hole, vertExaggeration]);
 
-  // Camera presets
-  const handleSetCameraPreset = (preset: 'iso' | 'sectionEW' | 'sectionNS' | 'plan' | 'collar') => {
-    if (!controlsRef.current) return;
-    const controls = controlsRef.current;
-    const target = new THREE.Vector3(0, -selectedHole.totalDepthM * 0.4 * verticalExaggeration, 0);
-
-    controls.target.copy(target);
-
-    switch (preset) {
-      case 'iso':
-        controls.object.position.set(60, 40, 80);
-        break;
-      case 'sectionEW':
-        // Looking North: X vs Y
-        controls.object.position.set(0, target.y, 110);
-        break;
-      case 'sectionNS':
-        // Looking West: Z vs Y
-        controls.object.position.set(110, target.y, 0);
-        break;
-      case 'plan':
-        // Looking down from above
-        controls.object.position.set(0, 130, 0);
-        break;
-      case 'collar':
-        controls.target.set(0, 0, 0);
-        controls.object.position.set(12, 10, 15);
-        break;
-    }
-    controls.update();
-  };
-
-  // High-Resolution Snapshot Capture
-  const handleCaptureSnapshot = () => {
-    const canvas = document.querySelector('.r3f-canvas-container canvas') as HTMLCanvasElement;
-    if (!canvas) return;
-
-    try {
-      const dataUrl = canvas.toDataURL('image/png');
-      const a = document.createElement('a');
-      a.href = dataUrl;
-      a.download = `3D_Borehole_Visualizer_${selectedHole.holeId}_${new Date().toISOString().slice(0, 10)}.png`;
-      a.click();
-    } catch (err) {
-      console.warn('Unable to export snapshot canvas:', err);
-    }
-  };
+  const collarPos: [number, number, number] = useMemo(() => {
+    return [
+      hole.collarEasting ? (hole.collarEasting % 1000) * 0.1 : 0,
+      0,
+      hole.collarNorthing ? (hole.collarNorthing % 1000) * 0.1 : 0
+    ];
+  }, [hole]);
 
   return (
-    <div className={`relative flex flex-col bg-stone-950 rounded-2xl border border-stone-800 overflow-hidden shadow-2xl ${className}`}>
-      {/* Top Header & 3D Visualizer Control Bar */}
-      <div className="flex flex-wrap items-center justify-between p-3.5 bg-stone-900/90 border-b border-stone-800 gap-3 z-10 backdrop-blur-md">
-        <div className="flex items-center gap-3">
-          <div className="p-2 rounded-xl bg-gradient-to-br from-amber-500/20 to-amber-600/10 border border-amber-500/30 text-amber-400">
-            <Box size={18} className="animate-pulse" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h3 className="text-sm font-bold text-stone-100 flex items-center gap-1.5">
-                <span>3D Drill Path &amp; Geological Strata Visualizer</span>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                  React-Three-Fiber WebGL
-                </span>
-              </h3>
-            </div>
-            <p className="text-xs text-stone-400">
-              Interactive 3D trajectory: Dip <span className="text-amber-400 font-mono">{selectedHole.dip}°</span> • Azimuth <span className="text-amber-400 font-mono">{selectedHole.azimuth}°</span> • EOH <span className="text-amber-400 font-mono">{selectedHole.totalDepthM}m</span>
-            </p>
-          </div>
-        </div>
+    <group>
+      <CollarBeacon position={collarPos} holeId={hole.holeId} isMain={isMain} />
 
-        {/* View mode toggle: Focus Borehole vs All Project Boreholes */}
-        <div className="flex items-center gap-2">
-          <div className="flex bg-stone-950 p-1 rounded-xl border border-stone-700">
+      {segments.map((seg) => (
+        <StrataIntervalMesh
+          key={`${hole.id || hole.holeId}-${seg.index}`}
+          start={seg.startPos}
+          end={seg.endPos}
+          interval={seg.interval}
+          index={seg.index}
+          isSelected={isMain && selectedIntervalIndex === seg.index}
+          coreRadius={coreRadius}
+          showGradeGlow={showGradeGlow}
+          onSelect={() => {
+            if (onSelectInterval) {
+              onSelectInterval(seg.interval, seg.index);
+            }
+          }}
+        />
+      ))}
+    </group>
+  );
+};
+
+// Scene Auto-Rotation Controller
+const AutoRotatingScene: React.FC<{ isRotating: boolean; speed: number; children: React.ReactNode }> = ({
+  isRotating,
+  speed,
+  children
+}) => {
+  const groupRef = useRef<THREE.Group>(null);
+
+  useFrame((_, delta) => {
+    if (isRotating && groupRef.current) {
+      groupRef.current.rotation.y += delta * speed;
+    }
+  });
+
+  return <group ref={groupRef}>{children}</group>;
+};
+
+export const DrillHole3DVisualizerR3F: React.FC<DrillHole3DVisualizerR3FProps> = ({
+  drillhole,
+  allDrillholes = [],
+  onSelectInterval,
+  selectedIntervalIndex
+}) => {
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isAutoRotating, setIsAutoRotating] = useState(false);
+  const [rotationSpeed] = useState(0.3);
+  const [vertExaggeration, setVertExaggeration] = useState(1.2);
+  const [coreRadius, setCoreRadius] = useState(0.4);
+  const [showAllHoles, setShowAllHoles] = useState(true);
+  const [showStrataHorizons, setShowStrataHorizons] = useState(true);
+  const [showGrid] = useState(true);
+  const [showGradeGlow, setShowGradeGlow] = useState(true);
+  const [cameraPreset, setCameraPreset] = useState<'perspective' | 'top' | 'cross-section'>('perspective');
+  const [infoOpen, setInfoOpen] = useState(false);
+
+  const controlsRef = useRef<any>(null);
+
+  // Switch camera views
+  const applyCameraPreset = (preset: 'perspective' | 'top' | 'cross-section') => {
+    setCameraPreset(preset);
+    if (!controlsRef.current) return;
+
+    if (preset === 'top') {
+      controlsRef.current.reset();
+      controlsRef.current.object.position.set(0, 80, 0);
+      controlsRef.current.target.set(0, -30, 0);
+    } else if (preset === 'cross-section') {
+      controlsRef.current.reset();
+      controlsRef.current.object.position.set(0, -25, 75);
+      controlsRef.current.target.set(0, -25, 0);
+    } else {
+      controlsRef.current.reset();
+      controlsRef.current.object.position.set(35, 25, 45);
+      controlsRef.current.target.set(0, -20, 0);
+    }
+    controlsRef.current.update();
+  };
+
+  const handleResetCamera = () => {
+    if (controlsRef.current) {
+      controlsRef.current.reset();
+      controlsRef.current.object.position.set(35, 25, 45);
+      controlsRef.current.target.set(0, -20, 0);
+      controlsRef.current.update();
+    }
+  };
+
+  // Derive unique horizon depths for the strata layer surfaces
+  const strataHorizons = useMemo(() => {
+    if (!drillhole.intervals || drillhole.intervals.length === 0) return [];
+    return drillhole.intervals.slice(0, 4).map((interval) => ({
+      depth: getToDepth(interval) * (vertExaggeration || 1),
+      color: interval.color || getLithologyColor(interval.lithology),
+      label: interval.lithology
+    }));
+  }, [drillhole, vertExaggeration]);
+
+  const activeInterval = selectedIntervalIndex !== null && selectedIntervalIndex !== undefined && drillhole.intervals
+    ? drillhole.intervals[selectedIntervalIndex]
+    : null;
+
+  return (
+    <div
+      className={`relative rounded-xl border border-slate-700/80 bg-slate-950 overflow-hidden shadow-2xl flex flex-col ${
+        isFullscreen ? 'fixed inset-0 z-50 rounded-none border-none' : 'h-[620px] w-full'
+      }`}
+    >
+      {/* Top HUD Controls Bar */}
+      <div className="absolute top-0 left-0 right-0 z-10 flex flex-wrap items-center justify-between p-3 bg-gradient-to-b from-slate-950/90 via-slate-950/70 to-transparent backdrop-blur-sm pointer-events-auto">
+        <div className="flex items-center space-x-2">
+          <div className="flex items-center space-x-1.5 px-3 py-1 bg-cyan-950/80 border border-cyan-500/40 rounded-lg text-cyan-300 font-mono text-xs shadow-md">
+            <Compass className="w-4 h-4 text-cyan-400 animate-spin-slow" />
+            <span className="font-bold">{drillhole.holeId}</span>
+            <span className="text-slate-400">|</span>
+            <span className="text-[11px] text-cyan-200">Depth: {drillhole.totalDepthM}m</span>
+            <span className="text-slate-400">|</span>
+            <span className="text-[11px] text-amber-300">Dip: {drillhole.dipDeg}°</span>
+          </div>
+
+          <div className="hidden md:flex items-center bg-slate-900/80 border border-slate-700 rounded-lg p-0.5 text-xs">
             <button
-              onClick={() => setViewMode('single')}
-              className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
-                viewMode === 'single'
-                  ? 'bg-amber-500 text-stone-950 shadow-md'
-                  : 'text-stone-400 hover:text-stone-200'
+              onClick={() => applyCameraPreset('perspective')}
+              className={`px-2.5 py-1 rounded transition-colors ${
+                cameraPreset === 'perspective' ? 'bg-cyan-600 text-white font-medium' : 'text-slate-400 hover:text-white'
               }`}
             >
-              Focus: {selectedHole.holeId}
+              3D Orbit
             </button>
             <button
-              onClick={() => setViewMode('all')}
-              className={`px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${
-                viewMode === 'all'
-                  ? 'bg-amber-500 text-stone-950 shadow-md'
-                  : 'text-stone-400 hover:text-stone-200'
+              onClick={() => applyCameraPreset('top')}
+              className={`px-2.5 py-1 rounded transition-colors ${
+                cameraPreset === 'top' ? 'bg-cyan-600 text-white font-medium' : 'text-slate-400 hover:text-white'
               }`}
-            >
-              <span>All Holes ({allDrillholes.length})</span>
-            </button>
-          </div>
-
-          <button
-            onClick={handleCaptureSnapshot}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-stone-800 hover:bg-stone-700 border border-stone-700 text-xs font-bold text-stone-200 transition-colors"
-            title="Download high-resolution 3D PNG snapshot of geological strata"
-          >
-            <Download size={13} className="text-amber-400" />
-            <span>3D PNG</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Main 3D Canvas Area */}
-      <div className="relative w-full h-[620px] bg-gradient-to-b from-stone-950 via-stone-900 to-stone-950 r3f-canvas-container">
-        <Canvas
-          ref={canvasRef}
-          camera={{ position: [60, 40, 80], fov: 45 }}
-          gl={{ antialias: true, preserveDrawingBuffer: true }}
-          className="w-full h-full cursor-grab active:cursor-grabbing"
-        >
-          {/* Lighting */}
-          <ambientLight intensity={1.1} />
-          <directionalLight position={[50, 80, 50]} intensity={1.8} castShadow />
-          <directionalLight position={[-40, -50, -40]} intensity={0.6} color="#38bdf8" />
-          <pointLight position={[0, 20, 0]} intensity={1.2} color="#fbbf24" distance={100} />
-
-          {/* Subsurface Geological Grid */}
-          {showGrid && (
-            <Grid
-              position={[0, 0, 0]}
-              args={[120, 120]}
-              cellSize={10}
-              cellThickness={0.7}
-              cellColor="#475569"
-              sectionSize={50}
-              sectionThickness={1.2}
-              sectionColor="#f59e0b"
-              fadeDistance={180}
-              infiniteGrid={false}
-            />
-          )}
-
-          {/* Geological Strata Horizon Planes */}
-          <StrataHorizons
-            showHorizons={showStrataHorizons}
-            opacity={strataOpacity}
-            verticalExaggeration={verticalExaggeration}
-            boundsRadius={60}
-          />
-
-          {/* Borehole Rigs */}
-          {viewMode === 'single' ? (
-            <BoreholeRig
-              drillhole={selectedHole}
-              isSelectedHole={true}
-              selectedInterval={selectedInterval}
-              hoveredInterval={hoveredInterval}
-              onSelectInterval={(inv) => setSelectedInterval(inv)}
-              onHoverInterval={(inv) => setHoveredInterval(inv)}
-              coreRadius={coreRadius}
-              verticalExaggeration={verticalExaggeration}
-              showDepthMarkers={showDepthMarkers}
-            />
-          ) : (
-            holesWithCoordinates.map(({ hole, offset }) => (
-              <BoreholeRig
-                key={hole.holeId}
-                drillhole={hole}
-                isSelectedHole={hole.holeId === selectedHole.holeId}
-                selectedInterval={selectedInterval}
-                hoveredInterval={hoveredInterval}
-                onSelectInterval={(inv) => setSelectedInterval(inv)}
-                onHoverInterval={(inv) => setHoveredInterval(inv)}
-                onSelectHole={onSelectHole}
-                coreRadius={coreRadius}
-                verticalExaggeration={verticalExaggeration}
-                showDepthMarkers={showDepthMarkers}
-                collarOffset={offset}
-              />
-            ))
-          )}
-
-          {/* Interactive Controls & Orientation Compass */}
-          <OrbitControls
-            ref={controlsRef}
-            autoRotate={autoRotate}
-            autoRotateSpeed={0.8}
-            enableDamping
-            dampingFactor={0.06}
-            minDistance={8}
-            maxDistance={260}
-          />
-
-          <GizmoHelper alignment="bottom-right" margin={[70, 70]}>
-            <GizmoViewport axisColors={['#ef4444', '#10b981', '#3b82f6']} labelColor="#ffffff" />
-          </GizmoHelper>
-        </Canvas>
-
-        {/* Floating Camera Presets Toolbar */}
-        <div className="absolute top-4 left-4 flex flex-col gap-1.5 bg-stone-900/90 p-2 rounded-xl border border-stone-800 shadow-xl backdrop-blur-md z-10">
-          <span className="text-[10px] font-bold text-stone-400 uppercase tracking-wider px-1">
-            Camera Views
-          </span>
-          <div className="grid grid-cols-2 gap-1">
-            <button
-              onClick={() => handleSetCameraPreset('iso')}
-              className="px-2 py-1 text-[11px] font-medium bg-stone-800 hover:bg-stone-700 text-stone-200 rounded border border-stone-700 transition"
-            >
-              Isometric 3D
-            </button>
-            <button
-              onClick={() => handleSetCameraPreset('sectionEW')}
-              className="px-2 py-1 text-[11px] font-medium bg-stone-800 hover:bg-stone-700 text-stone-200 rounded border border-stone-700 transition"
-            >
-              Section E-W
-            </button>
-            <button
-              onClick={() => handleSetCameraPreset('sectionNS')}
-              className="px-2 py-1 text-[11px] font-medium bg-stone-800 hover:bg-stone-700 text-stone-200 rounded border border-stone-700 transition"
-            >
-              Section N-S
-            </button>
-            <button
-              onClick={() => handleSetCameraPreset('plan')}
-              className="px-2 py-1 text-[11px] font-medium bg-stone-800 hover:bg-stone-700 text-stone-200 rounded border border-stone-700 transition"
             >
               Plan (Top)
             </button>
+            <button
+              onClick={() => applyCameraPreset('cross-section')}
+              className={`px-2.5 py-1 rounded transition-colors ${
+                cameraPreset === 'cross-section' ? 'bg-cyan-600 text-white font-medium' : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              Cross-Section
+            </button>
           </div>
-          <button
-            onClick={() => handleSetCameraPreset('collar')}
-            className="w-full mt-0.5 px-2 py-1 text-[11px] font-medium bg-stone-800/80 hover:bg-stone-700 text-amber-300 rounded border border-amber-500/30 transition flex items-center justify-center gap-1"
-          >
-            <MapPin size={11} /> Collar View
-          </button>
-          <button
-            onClick={() => setAutoRotate(!autoRotate)}
-            className={`w-full mt-1 px-2 py-1 text-[11px] font-bold rounded border transition flex items-center justify-center gap-1 ${
-              autoRotate
-                ? 'bg-amber-500 text-stone-950 border-amber-400'
-                : 'bg-stone-800 text-stone-300 border-stone-700 hover:bg-stone-700'
-            }`}
-          >
-            {autoRotate ? <Pause size={11} /> : <Play size={11} />}
-            <span>{autoRotate ? 'Pause Orbit' : 'Auto Orbit'}</span>
-          </button>
         </div>
 
-        {/* 3D Geometry Sliders & Overlays Controls */}
-        <div className="absolute top-4 right-4 flex flex-col gap-2 bg-stone-900/90 p-3 rounded-xl border border-stone-800 shadow-xl backdrop-blur-md z-10 w-64">
-          <span className="text-[10px] font-bold text-amber-400 uppercase tracking-wider flex items-center justify-between">
-            <span>3D Controls</span>
-            <Sliders size={12} />
-          </span>
+        <div className="flex items-center space-x-2">
+          {/* Auto Rotation Toggle */}
+          <button
+            onClick={() => setIsAutoRotating(!isAutoRotating)}
+            className={`p-1.5 rounded-lg border text-xs flex items-center space-x-1 transition-all ${
+              isAutoRotating
+                ? 'bg-amber-600/30 border-amber-500 text-amber-300'
+                : 'bg-slate-800/80 border-slate-700 text-slate-300 hover:bg-slate-700'
+            }`}
+            title={isAutoRotating ? 'Pause Orbit' : 'Auto Rotate Orbit'}
+          >
+            {isAutoRotating ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+            <span className="hidden sm:inline text-[11px]">{isAutoRotating ? 'Pause' : 'Auto-Orbit'}</span>
+          </button>
 
-          {/* Vertical Exaggeration */}
-          <div className="space-y-1">
-            <div className="flex items-center justify-between text-xs text-stone-300">
-              <span>Vertical Exaggeration</span>
-              <span className="font-mono text-amber-400 font-bold">{verticalExaggeration.toFixed(1)}x</span>
-            </div>
+          {/* Strata Horizons Toggle */}
+          <button
+            onClick={() => setShowStrataHorizons(!showStrataHorizons)}
+            className={`p-1.5 rounded-lg border text-xs flex items-center space-x-1 transition-all ${
+              showStrataHorizons
+                ? 'bg-indigo-600/30 border-indigo-500 text-indigo-300'
+                : 'bg-slate-800/80 border-slate-700 text-slate-400 hover:text-slate-200'
+            }`}
+            title="Toggle Strata Horizon Planes"
+          >
+            <Layers className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline text-[11px]">Strata Planes</span>
+          </button>
+
+          {/* Multi-borehole Toggle */}
+          {allDrillholes.length > 1 && (
+            <button
+              onClick={() => setShowAllHoles(!showAllHoles)}
+              className={`p-1.5 rounded-lg border text-xs flex items-center space-x-1 transition-all ${
+                showAllHoles
+                  ? 'bg-emerald-600/30 border-emerald-500 text-emerald-300'
+                  : 'bg-slate-800/80 border-slate-700 text-slate-400 hover:text-slate-200'
+              }`}
+              title="Show adjacent borehole field"
+            >
+              <Activity className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline text-[11px]">Field ({allDrillholes.length})</span>
+            </button>
+          )}
+
+          {/* Reset Camera */}
+          <button
+            onClick={handleResetCamera}
+            className="p-1.5 rounded-lg border border-slate-700 bg-slate-800/80 text-slate-300 hover:bg-slate-700 transition-colors"
+            title="Reset View"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+          </button>
+
+          {/* Quick Help */}
+          <button
+            onClick={() => setInfoOpen(!infoOpen)}
+            className="p-1.5 rounded-lg border border-slate-700 bg-slate-800/80 text-slate-300 hover:bg-slate-700 transition-colors"
+            title="Visualizer instructions"
+          >
+            <HelpCircle className="w-3.5 h-3.5" />
+          </button>
+
+          {/* Fullscreen Toggle */}
+          <button
+            onClick={() => setIsFullscreen(!isFullscreen)}
+            className="p-1.5 rounded-lg border border-slate-700 bg-slate-800/80 text-slate-300 hover:bg-slate-700 transition-colors"
+            title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
+          >
+            {isFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+          </button>
+        </div>
+      </div>
+
+      {/* 3D Canvas */}
+      <div className="flex-1 w-full h-full relative cursor-grab active:cursor-grabbing">
+        <Canvas
+          camera={{ position: [35, 25, 45], fov: 45, near: 0.1, far: 1000 }}
+          gl={{ antialias: true, alpha: true }}
+        >
+          {/* Lighting */}
+          <ambientLight intensity={0.8} />
+          <directionalLight position={[30, 50, 30]} intensity={1.5} castShadow />
+          <pointLight position={[-20, 20, -20]} intensity={0.6} color="#38bdf8" />
+          <pointLight position={[0, -50, 0]} intensity={0.4} color="#f59e0b" />
+
+          {/* Auto-rotating scene wrapper */}
+          <AutoRotatingScene isRotating={isAutoRotating} speed={rotationSpeed}>
+            {/* Surface Reference Grid */}
+            {showGrid && (
+              <Grid
+                args={[120, 120]}
+                cellSize={5}
+                cellThickness={0.7}
+                cellColor="#334155"
+                sectionSize={25}
+                sectionThickness={1.2}
+                sectionColor="#0284c7"
+                fadeDistance={100}
+                fadeStrength={1}
+                position={[0, 0, 0]}
+              />
+            )}
+
+            {/* Geological Strata Horizons */}
+            {showStrataHorizons &&
+              strataHorizons.map((sh, idx) => (
+                <GeologicalStrataHorizon
+                  key={`horizon-${idx}`}
+                  depth={sh.depth}
+                  color={sh.color}
+                  label={sh.label}
+                  radius={28}
+                />
+              ))}
+
+            {/* Target Borehole 3D Path */}
+            <DrillHole3DMesh
+              hole={drillhole}
+              isMain={true}
+              vertExaggeration={vertExaggeration}
+              coreRadius={coreRadius}
+              selectedIntervalIndex={selectedIntervalIndex}
+              onSelectInterval={onSelectInterval}
+              showGradeGlow={showGradeGlow}
+            />
+
+            {/* Adjacent Boreholes in exploration field */}
+            {showAllHoles &&
+              allDrillholes
+                .filter((h) => (h.id || h.holeId) !== (drillhole.id || drillhole.holeId))
+                .map((adjHole) => (
+                  <DrillHole3DMesh
+                    key={adjHole.id || adjHole.holeId}
+                    hole={adjHole}
+                    isMain={false}
+                    vertExaggeration={vertExaggeration}
+                    coreRadius={coreRadius * 0.75}
+                    showGradeGlow={showGradeGlow}
+                  />
+                ))}
+          </AutoRotatingScene>
+
+          {/* Interactive Controls */}
+          <OrbitControls
+            ref={controlsRef}
+            enableDamping
+            dampingFactor={0.08}
+            minDistance={5}
+            maxDistance={250}
+            maxPolarAngle={Math.PI / 2 + 0.3}
+          />
+
+          {/* Orientation Gizmo */}
+          <GizmoHelper alignment="bottom-right" margin={[80, 80]}>
+            <GizmoViewport axisColors={['#ef4444', '#10b981', '#3b82f6']} labelColor="#ffffff" />
+          </GizmoHelper>
+        </Canvas>
+      </div>
+
+      {/* Floating Bottom Sliders & Settings Drawer */}
+      <div className="absolute bottom-3 left-3 right-3 z-10 flex flex-wrap items-center justify-between gap-2 pointer-events-auto">
+        <div className="flex flex-wrap items-center gap-3 bg-slate-900/90 border border-slate-700/80 backdrop-blur-md px-3 py-2 rounded-xl text-xs text-slate-300 shadow-xl">
+          <div className="flex items-center space-x-2">
+            <span className="text-[11px] text-slate-400 font-mono">Vert Exaggeration:</span>
             <input
               type="range"
               min="0.5"
-              max="3.0"
-              step="0.25"
-              value={verticalExaggeration}
-              onChange={(e) => setVerticalExaggeration(parseFloat(e.target.value))}
-              className="w-full h-1.5 bg-stone-700 rounded-lg appearance-none cursor-pointer accent-amber-500"
+              max="2.5"
+              step="0.1"
+              value={vertExaggeration}
+              onChange={(e) => setVertExaggeration(parseFloat(e.target.value))}
+              className="w-20 accent-cyan-400 h-1.5 bg-slate-700 rounded-lg cursor-pointer"
             />
+            <span className="font-mono text-cyan-300 text-[11px] w-6">{vertExaggeration}x</span>
           </div>
 
-          {/* Core Diameter */}
-          <div className="space-y-1">
-            <div className="flex items-center justify-between text-xs text-stone-300">
-              <span>Core Diameter</span>
-              <span className="font-mono text-amber-400 font-bold">{coreRadius.toFixed(1)}m</span>
-            </div>
+          <div className="h-4 w-px bg-slate-700 hidden sm:block" />
+
+          <div className="flex items-center space-x-2">
+            <span className="text-[11px] text-slate-400 font-mono">Core Diameter:</span>
             <input
               type="range"
-              min="0.4"
-              max="2.0"
-              step="0.2"
+              min="0.15"
+              max="1.2"
+              step="0.05"
               value={coreRadius}
               onChange={(e) => setCoreRadius(parseFloat(e.target.value))}
-              className="w-full h-1.5 bg-stone-700 rounded-lg appearance-none cursor-pointer accent-amber-500"
+              className="w-16 accent-cyan-400 h-1.5 bg-slate-700 rounded-lg cursor-pointer"
             />
           </div>
 
-          {/* Toggles */}
-          <div className="pt-2 border-t border-stone-800 space-y-1.5 text-xs">
-            <label className="flex items-center justify-between text-stone-300 cursor-pointer">
-              <span>Strata Horizons</span>
-              <input
-                type="checkbox"
-                checked={showStrataHorizons}
-                onChange={(e) => setShowStrataHorizons(e.target.checked)}
-                className="rounded accent-amber-500 cursor-pointer"
-              />
-            </label>
+          <div className="h-4 w-px bg-slate-700 hidden sm:block" />
 
-            {showStrataHorizons && (
-              <div className="pl-2 space-y-1">
-                <div className="flex items-center justify-between text-[11px] text-stone-400">
-                  <span>Horizons Opacity</span>
-                  <span className="font-mono">{Math.round(strataOpacity * 100)}%</span>
-                </div>
-                <input
-                  type="range"
-                  min="0.2"
-                  max="1.0"
-                  step="0.05"
-                  value={strataOpacity}
-                  onChange={(e) => setStrataOpacity(parseFloat(e.target.value))}
-                  className="w-full h-1 bg-stone-700 rounded appearance-none cursor-pointer accent-amber-500"
-                />
-              </div>
-            )}
-
-            <label className="flex items-center justify-between text-stone-300 cursor-pointer">
-              <span>Depth Calipers (50m)</span>
-              <input
-                type="checkbox"
-                checked={showDepthMarkers}
-                onChange={(e) => setShowDepthMarkers(e.target.checked)}
-                className="rounded accent-amber-500 cursor-pointer"
-              />
-            </label>
-
-            <label className="flex items-center justify-between text-stone-300 cursor-pointer">
-              <span>Surface Grid Plane</span>
-              <input
-                type="checkbox"
-                checked={showGrid}
-                onChange={(e) => setShowGrid(e.target.checked)}
-                className="rounded accent-amber-500 cursor-pointer"
-              />
-            </label>
-          </div>
+          <button
+            onClick={() => setShowGradeGlow(!showGradeGlow)}
+            className={`flex items-center space-x-1 px-2 py-0.5 rounded text-[11px] font-mono border transition-colors ${
+              showGradeGlow
+                ? 'bg-amber-950/80 border-amber-600/50 text-amber-300'
+                : 'bg-slate-800 border-slate-700 text-slate-400'
+            }`}
+          >
+            <Flame className="w-3 h-3 text-amber-400" />
+            <span>Assay Glow</span>
+          </button>
         </div>
 
-        {/* Selected 3D Core Interval Inspector Card */}
-        {selectedInterval && (
-          <div className="absolute bottom-4 left-4 max-w-sm bg-stone-900/95 border border-amber-500/50 p-3.5 rounded-xl shadow-2xl backdrop-blur-md z-10 text-stone-200">
-            <div className="flex items-center justify-between border-b border-stone-800 pb-2 mb-2">
-              <div className="flex items-center gap-1.5">
-                <div
-                  className="w-3 h-3 rounded-full"
-                  style={{
-                    backgroundColor:
-                      LITHOLOGY_COLORS[selectedInterval.lithology]?.color || '#8b5cf6',
-                  }}
-                />
-                <span className="font-bold text-xs text-stone-100">{selectedInterval.lithology}</span>
-              </div>
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                {selectedInterval.fromDepth}m – {selectedInterval.toDepth}m ({(selectedInterval.toDepth - selectedInterval.fromDepth).toFixed(1)}m length)
-              </span>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              <div className="bg-stone-950/60 p-2 rounded border border-stone-800">
-                <span className="text-[10px] text-stone-400 block">Primary Assay</span>
-                <span className="font-mono font-bold text-amber-400">
-                  {selectedInterval.assayAuGpt !== undefined
-                    ? `${selectedInterval.assayAuGpt} g/t Au`
-                    : selectedInterval.assayLiPct !== undefined
-                    ? `${selectedInterval.assayLiPct}% Li₂O`
-                    : `${selectedInterval.primaryGradeValue || 'N/A'} ${selectedInterval.gradeUnit || ''}`}
+        {/* Selected Interval Callout Details Card */}
+        {activeInterval && (
+          <div className="bg-slate-900/95 border border-cyan-500/50 backdrop-blur-md px-4 py-2.5 rounded-xl shadow-2xl text-xs text-white max-w-sm flex items-center space-x-3">
+            <div
+              className="w-3.5 h-10 rounded-full border border-white/20 shrink-0"
+              style={{ backgroundColor: activeInterval.color || getLithologyColor(activeInterval.lithology) }}
+            />
+            <div className="min-w-0">
+              <div className="font-bold text-cyan-300 truncate">
+                {activeInterval.lithology}
+                <span className="font-normal text-slate-400 ml-1.5 text-[11px]">
+                  ({getFromDepth(activeInterval)}m – {getToDepth(activeInterval)}m)
                 </span>
               </div>
-              <div className="bg-stone-950/60 p-2 rounded border border-stone-800">
-                <span className="text-[10px] text-stone-400 block">Rock Quality (RQD)</span>
-                <span className="font-mono font-bold text-cyan-400">
-                  {selectedInterval.rqdPercent || 85}% (Rec: {selectedInterval.recoveryPercent || 96}%)
-                </span>
+              <div className="text-[11px] text-slate-300 flex items-center space-x-3 mt-0.5">
+                {getGoldGrade(activeInterval) !== undefined && (
+                  <span className="text-amber-400 font-mono font-medium">Au: {getGoldGrade(activeInterval)} g/t</span>
+                )}
+                {getCopperGrade(activeInterval) !== undefined && (
+                  <span className="text-emerald-400 font-mono font-medium">Cu: {getCopperGrade(activeInterval)}%</span>
+                )}
+                {activeInterval.assayLiPct !== undefined && (
+                  <span className="text-purple-400 font-mono font-medium">Li2O: {activeInterval.assayLiPct}%</span>
+                )}
+                {activeInterval.alteration && (
+                  <span className="text-slate-400 truncate">{activeInterval.alteration}</span>
+                )}
               </div>
             </div>
-
-            {selectedInterval.mineralization && (
-              <div className="mt-2 text-[11px] text-stone-300 bg-stone-950/40 p-1.5 rounded border border-stone-800/80">
-                <span className="text-stone-400 font-medium">Mineralization:</span>{' '}
-                {selectedInterval.mineralization}
-              </div>
-            )}
-            {selectedInterval.alteration && (
-              <div className="mt-1 text-[11px] text-stone-400">
-                <span className="text-stone-500 font-medium">Alteration:</span> {selectedInterval.alteration}
-              </div>
-            )}
           </div>
         )}
-
-        {/* 3D Navigation Guide Tip */}
-        <div className="absolute bottom-4 right-4 bg-stone-950/80 border border-stone-800 px-3 py-1.5 rounded-lg text-[10px] text-stone-400 backdrop-blur-sm pointer-events-none flex items-center gap-2">
-          <span>Rotate: <strong className="text-stone-200">Left Click + Drag</strong></span>
-          <span>•</span>
-          <span>Pan: <strong className="text-stone-200">Right Click + Drag</strong></span>
-          <span>•</span>
-          <span>Zoom: <strong className="text-stone-200">Scroll</strong></span>
-        </div>
       </div>
 
-      {/* Geological Lithology Legend Bar */}
-      <div className="p-3 bg-stone-900 border-t border-stone-800 flex flex-wrap items-center gap-3 text-xs">
-        <span className="font-bold text-stone-400 text-[11px] uppercase tracking-wider flex items-center gap-1">
-          <Layers size={13} className="text-amber-400" />
-          <span>Lithology 3D Legend:</span>
-        </span>
-        {Object.entries(LITHOLOGY_COLORS).slice(0, 7).map(([litho, props]) => (
-          <div key={litho} className="flex items-center gap-1.5 bg-stone-950 px-2 py-1 rounded border border-stone-800">
-            <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: props.color }} />
-            <span className="text-[11px] text-stone-300 truncate max-w-[140px]">{litho}</span>
+      {/* Info / Navigation Help Modal */}
+      {infoOpen && (
+        <div className="absolute inset-0 z-30 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-cyan-500/40 rounded-xl p-5 max-w-md w-full shadow-2xl text-slate-200">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-2 mb-3">
+              <h4 className="font-bold text-cyan-300 text-sm flex items-center space-x-2">
+                <Compass className="w-4 h-4" />
+                <span>3D Drill Path Visualizer Guide</span>
+              </h4>
+              <button
+                onClick={() => setInfoOpen(false)}
+                className="text-slate-400 hover:text-white text-xs px-2 py-0.5 rounded bg-slate-800"
+              >
+                Close
+              </button>
+            </div>
+            <ul className="space-y-2 text-xs text-slate-300">
+              <li className="flex items-start space-x-2">
+                <span className="text-cyan-400 font-bold">•</span>
+                <span><strong>Rotate Scene:</strong> Click and drag with primary mouse button or single-touch drag.</span>
+              </li>
+              <li className="flex items-start space-x-2">
+                <span className="text-cyan-400 font-bold">•</span>
+                <span><strong>Pan Camera:</strong> Right-click and drag or two-finger drag.</span>
+              </li>
+              <li className="flex items-start space-x-2">
+                <span className="text-cyan-400 font-bold">•</span>
+                <span><strong>Zoom:</strong> Scroll wheel or pinch-to-zoom gesture.</span>
+              </li>
+              <li className="flex items-start space-x-2">
+                <span className="text-cyan-400 font-bold">•</span>
+                <span><strong>Inspect Strata:</strong> Click any interval cylinder on the 3D core to select it and view assays.</span>
+              </li>
+              <li className="flex items-start space-x-2">
+                <span className="text-cyan-400 font-bold">•</span>
+                <span><strong>Auto-Orbit:</strong> Enables continuous turntable rotation around borehole azimuth.</span>
+              </li>
+            </ul>
           </div>
-        ))}
-      </div>
+        </div>
+      )}
     </div>
   );
 };

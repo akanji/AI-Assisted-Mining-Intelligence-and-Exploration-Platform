@@ -43,6 +43,8 @@ import {
   computeIntervalVisualizationMetrics,
 } from '../utils/exportUtils';
 import { DrillHole3DStrata } from './DrillHole3DStrata';
+import { DrillHole3DVisualizerR3F } from './DrillHole3DVisualizerR3F';
+import { useLocalForageSync } from '../hooks/useLocalForageSync';
 import { DrillLogAnalyzer } from './DrillLogAnalyzer';
 import { DrillLogVisualizationChart } from './DrillLogVisualizationChart';
 import { DrillEfficiencyAnalytics } from './DrillEfficiencyAnalytics';
@@ -56,7 +58,7 @@ import {
   DEFAULT_SEEDED_SESSIONS,
   DRILL_LOG_HISTORY_STORAGE_KEY,
 } from './DrillLogSessionHistoryView';
-import { Box, Table, BarChart3, History, Flame, Cpu, RefreshCw, Activity, GitCompare, MessageSquare, MessageSquarePlus, Plus, Trash2, Edit3, Tag, Cloud, Database } from 'lucide-react';
+import { Box, Table, BarChart3, History, Flame, Cpu, RefreshCw, Activity, GitCompare, MessageSquare, MessageSquarePlus, Plus, Trash2, Edit3, Tag, Cloud, Database, Wifi, WifiOff } from 'lucide-react';
 import { useFirebase } from '../context/FirebaseContext';
 
 export interface DrillHoleManagerProps {
@@ -68,8 +70,19 @@ export const DrillHoleManager: React.FC<DrillHoleManagerProps> = ({ onNavigate }
   const [selectedHole, setSelectedHole] = useState<DrillHole>(SAMPLE_DRILLHOLES[0]);
   const [commodityFilter, setCommodityFilter] = useState<string>('all');
   const [activeViewMode, setActiveViewMode] = useState<
-    'visualization' | '3d_strata' | '2d_log' | 'density_chart' | 'efficiency_analytics' | 'comparative_analysis' | 'ai_predictor' | 'ai_analyzer' | 'session_history'
-  >('visualization');
+    'visualization' | '3d_r3f' | '3d_strata' | '2d_log' | 'density_chart' | 'efficiency_analytics' | 'comparative_analysis' | 'ai_predictor' | 'ai_analyzer' | 'session_history'
+  >('3d_r3f');
+
+  // IndexedDB offline synchronization via localForage
+  const {
+    isOnline: isLocalForageOnline,
+    stats: localForageStats,
+    isSyncing: isLocalForageSyncing,
+    triggerSync: triggerLocalForageSync,
+    addLocalAnnotation: addAnnotationToLocalForage,
+    persistDrillHoles: persistHolesToLocalForage,
+    toggleSimulatedConnection
+  } = useLocalForageSync();
 
   // Depth Interval Annotation State for persistent reference in local state
   const [annotationsMap, setAnnotationsMap] = useState<Record<string, string[]>>(() => {
@@ -126,6 +139,13 @@ export const DrillHoleManager: React.FC<DrillHoleManagerProps> = ({ onNavigate }
       } catch {}
       return updated;
     });
+
+    // LocalForage IndexedDB persistence with offline auto-sync queue
+    const parts = intervalKey.split('_');
+    const hId = parts[0] || selectedHole?.holeId || 'RC-24-001';
+    addAnnotationToLocalForage(hId, 0, noteText.trim()).catch((err) =>
+      console.warn('LocalForage annotation error:', err)
+    );
 
     // Cloud sync with Firebase Firestore if user is authenticated
     if (firebaseUser) {
@@ -589,8 +609,47 @@ export const DrillHoleManager: React.FC<DrillHoleManagerProps> = ({ onNavigate }
           </p>
         </div>
 
-        {/* Commodity filter & Global Export buttons */}
+        {/* Commodity filter, Offline Sync Badge, & Global Export buttons */}
         <div className="flex flex-wrap items-center gap-2">
+          {/* IndexedDB localForage Connectivity & Auto-Sync Status Badge */}
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-stone-900 border border-stone-700/80 text-xs shadow-sm">
+            <span
+              className={`w-2 h-2 rounded-full ${
+                isLocalForageOnline ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
+              }`}
+            />
+            {isLocalForageOnline ? (
+              <Wifi size={13} className="text-emerald-400" />
+            ) : (
+              <WifiOff size={13} className="text-amber-400" />
+            )}
+            <span className="font-mono text-[11px] text-stone-300">
+              {isLocalForageOnline ? 'IndexedDB Synced' : 'IndexedDB Offline'}
+            </span>
+            {localForageStats && localForageStats.pendingSyncCount > 0 && (
+              <span className="bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px] px-1.5 py-0.2 rounded font-mono font-bold">
+                {localForageStats.pendingSyncCount} pending
+              </span>
+            )}
+            <button
+              id="btn-trigger-localforage-sync"
+              onClick={() => triggerLocalForageSync()}
+              disabled={isLocalForageSyncing}
+              className="p-1 rounded hover:bg-stone-800 text-stone-400 hover:text-white transition-colors disabled:opacity-50"
+              title="Force sync local exploration mutations with remote store"
+            >
+              <RefreshCw size={12} className={isLocalForageSyncing ? 'animate-spin text-cyan-400' : ''} />
+            </button>
+            <button
+              id="btn-toggle-sim-connection"
+              onClick={toggleSimulatedConnection}
+              className="text-[10px] text-stone-400 hover:text-stone-200 underline font-mono ml-0.5"
+              title="Test offline localForage storage behavior"
+            >
+              {isLocalForageOnline ? 'Simulate Offline' : 'Simulate Online'}
+            </button>
+          </div>
+
           <span className="text-xs text-stone-400 font-semibold">Commodity:</span>
           <select
             value={commodityFilter}
@@ -859,6 +918,19 @@ export const DrillHoleManager: React.FC<DrillHoleManagerProps> = ({ onNavigate }
               {/* View Switcher Tabs */}
               <div className="flex flex-wrap items-center p-1 rounded-xl bg-stone-900 border border-stone-700 gap-1">
                 <button
+                  id="btn-view-3d-r3f"
+                  onClick={() => setActiveViewMode('3d_r3f')}
+                  className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                    activeViewMode === '3d_r3f'
+                      ? 'bg-cyan-500 text-stone-950 font-extrabold shadow-sm'
+                      : 'text-cyan-400 hover:text-white'
+                  }`}
+                  title="3D Visualizer: React-Three-Fiber interactive 3D borehole path, collar beacons & geological strata rotation"
+                >
+                  <Box size={13} className={activeViewMode === '3d_r3f' ? 'text-stone-950' : 'text-cyan-400'} />
+                  <span>3D Borehole (Three.js)</span>
+                </button>
+                <button
                   id="btn-view-visualization"
                   onClick={() => setActiveViewMode('visualization')}
                   className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold transition-all ${
@@ -869,7 +941,7 @@ export const DrillHoleManager: React.FC<DrillHoleManagerProps> = ({ onNavigate }
                   title="Visualization: D3.js 3D subsurface borehole model based on active drill hole data with rotation and mineral deposit inspection"
                 >
                   <Flame size={13} />
-                  <span>Visualization</span>
+                  <span>D3 Density</span>
                 </button>
                 <button
                   id="btn-view-ai-predictor"
@@ -1030,8 +1102,16 @@ export const DrillHoleManager: React.FC<DrillHoleManagerProps> = ({ onNavigate }
             </div>
           </div>
 
-          {/* Conditional View: 3D Strata & D3 Density Heat-Map vs AI Drill Predictor vs Density & Concentration Plot vs 2D Core Log vs AI Drill Log Analyzer */}
-          {activeViewMode === 'visualization' || activeViewMode === '3d_strata' ? (
+          {/* Conditional View: 3D R3F Visualizer vs 3D Strata D3 vs AI Drill Predictor vs Density Chart vs 2D Core Log vs AI Drill Log Analyzer */}
+          {activeViewMode === '3d_r3f' ? (
+            <div className="space-y-3">
+              <DrillHole3DVisualizerR3F
+                drillhole={selectedHole}
+                allDrillholes={drillholes}
+                selectedIntervalIndex={null}
+              />
+            </div>
+          ) : activeViewMode === 'visualization' || activeViewMode === '3d_strata' ? (
             <DrillHole3DStrata
               drillholes={filteredHoles}
               selectedHole={selectedHole}
